@@ -80,7 +80,15 @@ install raw2ometiff by [conda](https://anaconda.org/ome/raw2ometiff):
 
     conda install ome::raw2ometiff
 
+## 3. install packages for ome-tiff to pyramidal-tiff:
+Requirement: libvips, pyvips:
+
+    conda install conda-forge::libvips
+    pip install pyvips
+
 # Usage
+* This is a use case based on command lines. For batch running on OSC, go to the parent dir [readme](../README.md).
+
 load pathology sdk:
 
     module use $HOME/local/share/lmodfiles
@@ -93,7 +101,7 @@ Run the conversion:
 
 If missing metadata error happens, see how to [debug](./isyntax_readme.md) isyntax2raw's source code.
 
-## 2. raw2tiff
+## 2. raw2tiff (to OME-TIFF)
 Run the conversion (Bio-Formats 6.x):
 
     raw2ometiff tile_directory pyramid.ome.tiff --rgb
@@ -101,3 +109,7 @@ Run the conversion (Bio-Formats 6.x):
 or generate a 5.9.x-compatible pyramid:
 
     raw2ometiff tile_directory pyramid.tiff --legacy --rgb
+
+## 3. OME-TIFF to pyramidal-tiff:
+Run:
+    python ../ome2pyramidaltiff.py --input inputdir --output outputdir
