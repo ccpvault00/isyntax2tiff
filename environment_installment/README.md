@@ -2,6 +2,8 @@
 Solution modified based on OSC [tutorial](https://www.osc.edu/resources/getting_started/howto/howto_locally_installing_software#getting-started)
 ## 1. Download from [Philips knowledge center](https://philips.mizecx.com/cc/knowledgeCenter.html?0b02b0ef41ddca1559617e2d350f77be8c43bfb3bd8a7b465631359da601aa757f2d0ecb2a58d4b1d7226d3506249a61#sblox=non)
 
+Search `pathology sdk` and download the `PathologySDK_2.0-L1_Packages.zip`. After extraction, using the CentOS version of it that fits OSC systam.
+
 ## 2. build `local` folder in home
         local
             |-- src
