@@ -57,7 +57,8 @@ def generate_output_path(input_file: Path, output_dir: Path, suffix: str = "") -
     clean_stem = input_file.stem
     
     # Replace problematic characters that might cause file system issues
-    problematic_chars = ['(', ')', '[', ']', '{', '}', '<', '>', '|', '&', ';', '*', '?', '"', "'"]
+    # Note: The original filename S114-99047-A-PAX8(MRQ50) becomes S114-99047-A-PAX8_MRQ50_
+    problematic_chars = ['(', ')', '[', ']', '{', '}', '<', '>', '|', '&', ';', '*', '?', '"', "'", ' ']
     for char in problematic_chars:
         clean_stem = clean_stem.replace(char, '_')
     
