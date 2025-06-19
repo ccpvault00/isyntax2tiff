@@ -601,8 +601,7 @@ class ISyntax2PyramidalTIFF:
                 macro_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False,
-                    'strip_height': macro_image.height  # Force strip mode with full height
+                    'tile': False
                 }
                 if 'Q' in save_params:
                     macro_params['Q'] = save_params['Q']
@@ -620,8 +619,7 @@ class ISyntax2PyramidalTIFF:
                 label_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False,
-                    'strip_height': label_image.height  # Force strip mode with full height
+                    'tile': False
                 }
                 if 'Q' in save_params:
                     label_params['Q'] = save_params['Q']
