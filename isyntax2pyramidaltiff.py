@@ -597,12 +597,14 @@ class ISyntax2PyramidalTIFF:
                     macro_temp = tmp.name
                     temp_files.append(macro_temp)
                 
-                # Use simple compression for associated images
+                # Use strip-based storage for associated images (like original TIFF)
                 macro_params = {
-                    'compression': 'jpeg' if save_params['compression'] == 'jpeg' else 'lzw',
-                    'bigtiff': False
+                    'compression': 'jpeg',
+                    'bigtiff': False,
+                    'tile': False,  # Use strips, not tiles
+                    'strip': True   # Explicitly use strip storage
                 }
-                if save_params['compression'] == 'jpeg' and 'Q' in save_params:
+                if 'Q' in save_params:
                     macro_params['Q'] = save_params['Q']
                 
                 macro_image.tiffsave(macro_temp, **macro_params)
@@ -614,12 +616,14 @@ class ISyntax2PyramidalTIFF:
                     label_temp = tmp.name
                     temp_files.append(label_temp)
                 
-                # Use simple compression for associated images
+                # Use strip-based storage for associated images (like original TIFF)
                 label_params = {
-                    'compression': 'jpeg' if save_params['compression'] == 'jpeg' else 'lzw',
-                    'bigtiff': False
+                    'compression': 'jpeg',
+                    'bigtiff': False,
+                    'tile': False,  # Use strips, not tiles
+                    'strip': True   # Explicitly use strip storage
                 }
-                if save_params['compression'] == 'jpeg' and 'Q' in save_params:
+                if 'Q' in save_params:
                     label_params['Q'] = save_params['Q']
                 
                 label_image.tiffsave(label_temp, **label_params)
@@ -654,6 +658,30 @@ class ISyntax2PyramidalTIFF:
                 shutil.copy2(main_temp, self.output_path)
             else:
                 log.info("Multi-directory TIFF created successfully")
+                
+                # Fix Subfile Type for associated images using tiffset
+                try:
+                    # Count total directories to find associated images
+                    tiffinfo_result = subprocess.run(['tiffinfo', self.output_path], 
+                                                   capture_output=True, text=True)
+                    if tiffinfo_result.returncode == 0:
+                        directory_count = tiffinfo_result.stdout.count('TIFF directory')
+                        
+                        # Set SubfileType=1 (reduced-resolution) for last two directories (macro and label)
+                        if macro_image is not None:
+                            macro_dir = directory_count - (2 if label_image is not None else 1)
+                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '254', '1', self.output_path],
+                                         capture_output=True)
+                            log.info(f"Set macro image (directory {macro_dir}) as reduced-resolution")
+                        
+                        if label_image is not None:
+                            label_dir = directory_count - 1
+                            subprocess.run(['tiffset', '-d', str(label_dir), '-s', '254', '1', self.output_path],
+                                         capture_output=True)
+                            log.info(f"Set label image (directory {label_dir}) as reduced-resolution")
+                
+                except Exception as e:
+                    log.warning(f"Failed to set Subfile Type tags: {e}")
                 
         except Exception as e:
             log.error(f"Failed to create multi-directory TIFF: {e}")
