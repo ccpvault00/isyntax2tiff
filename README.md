@@ -26,23 +26,32 @@ For running on a local Ubuntu 24.04 system without SLURM:
 
 **Quick Setup:**
 ```bash
-# 1. Create conda environment
+# 1. Clone repository with submodules
+git clone --recursive https://github.com/your-username/isyntax2tiff.git
+cd isyntax2tiff
+
+# 2. Create conda environment
 mamba create -n isyntax2tiff python=3.8 -y
 mamba activate isyntax2tiff
 
-# 2. Install dependencies
+# 3. Install dependencies
 mamba install -c conda-forge libvips pyvips blosc tinyxml openssl=1.1.1 pillow -y
 mamba install -c ome raw2ometiff -y
 
-# 3. Install isyntax2raw
-git clone https://github.com/glencoesoftware/isyntax2raw.git
-cd isyntax2raw && pip install .
+# 4. Install isyntax2raw from submodule
+cd isyntax2raw && pip install . && cd ..
 ```
 
 **Prerequisites:**
 - Ubuntu 24.04 (or similar Linux distribution)
 - Miniforge/Miniconda/Anaconda
 - Philips PathologySDK (downloaded from Philips Knowledge Center)
+
+**Note for existing repositories:**
+If you already cloned the repository, initialize the submodule:
+```bash
+git submodule update --init --recursive
+```
 
 **Detailed Setup:**
 See [`local_setup_files_for_ubuntu24.04/setup_philipsSDK_locally.md`](./local_setup_files_for_ubuntu24.04/setup_philipsSDK_locally.md) for complete installation instructions including PathologySDK setup.

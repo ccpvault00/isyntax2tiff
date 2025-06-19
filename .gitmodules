@@ -1,0 +1,3 @@
+[submodule "isyntax2raw"]
+	path = isyntax2raw
+	url = https://github.com/glencoesoftware/isyntax2raw.git
