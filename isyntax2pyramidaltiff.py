@@ -677,10 +677,17 @@ class ISyntax2PyramidalTIFF:
                             # Set SubfileType=1 (reduced-resolution)
                             subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '254', '1', self.output_path],
                                          capture_output=True)
+                            
+                            # Calculate macro image metadata like the reference
+                            # Reference: Macro -offset=(0,0)-pixelsize=(0.0315,0.0315)-rois=((0,0,24000,20998),(56000,0,24390,20000))
+                            macro_pixel_size = self.pixel_size_x * (self.size_x / macro_image.width)
+                            macro_desc = f"Macro -offset=(0,0)-pixelsize=({macro_pixel_size:.4f},{macro_pixel_size:.4f})-rois=((0,0,{self.size_x},{self.size_y}),({self.size_x},0,{macro_image.width},{macro_image.height}))"
+                            
                             # Set ImageDescription for QuPath recognition
-                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '270', 'Macro', self.output_path],
+                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '270', macro_desc, self.output_path],
                                          capture_output=True)
-                            log.info(f"Set macro image (directory {macro_dir}) as associated image")
+                            log.info(f"Set macro image (directory {macro_dir}) as associated image with metadata")
+                            log.info(f"Macro metadata: {macro_desc}")
                         
                         if label_image is not None:
                             label_dir = directory_count - 1
