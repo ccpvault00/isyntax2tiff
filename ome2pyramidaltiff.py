@@ -14,10 +14,10 @@ slide = pyvips.Image.new_from_file(args.path, access="sequential")
 slide.tiffsave(
     args.output,
     tile=True,           # Use tiling
-    tile_width=512,      # Tile size (standard)
-    tile_height=512,
+    tile_width=1024,      # Tile size (standard)
+    tile_height=1024,
     pyramid=True,        # Create pyramid levels (multi-resolution)
     compression="jpeg",  # JPEG compression (widely supported by OpenSlide)
-    Q=90,                # JPEG quality (adjust as needed)
+    Q=80,                # JPEG quality (adjust as needed)
     bigtiff=True         # Use BigTIFF if the file is large (>4GB)
 )
