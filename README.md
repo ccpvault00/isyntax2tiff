@@ -100,6 +100,38 @@ python isyntax2pyramidaltiff.py input.isyntax output.tiff \
 - ✅ **Memory efficient**: Processes large images without excessive RAM usage
 - ✅ **Configurable**: Adjustable compression, quality, tile sizes, and parallelization
 
+### 🚀 Batch Direct Conversion
+
+Process multiple iSyntax files efficiently with parallel processing:
+
+```bash
+# Basic batch conversion
+./batch_convert.sh /path/to/isyntax/directory /path/to/output/directory
+
+# High-performance batch conversion
+./batch_convert.sh /path/to/isyntax/files /path/to/output \
+    --file-workers 4 \
+    --workers 8 \
+    --pyramid-512
+
+# Advanced Python interface
+python batch_direct_convert.py /path/to/isyntax /path/to/output \
+    --file-workers 2 \
+    --conversion-workers 8 \
+    --tile-size 1024 \
+    --compression jpeg \
+    --quality 75 \
+    --pyramid-512
+```
+
+**Batch Features:**
+- ✅ **Parallel file processing**: Process multiple files simultaneously
+- ✅ **Progress tracking**: Real-time progress and logging
+- ✅ **Resume capability**: Skip already converted files
+- ✅ **Error handling**: Continue processing if individual files fail
+- ✅ **Performance optimization**: Configurable parallelization levels
+- ✅ **Comprehensive logging**: Detailed conversion logs and statistics
+
 ### 📁 Traditional Pipeline (Legacy)
 
 Process individual files using the traditional 3-step conversion:
@@ -150,16 +182,21 @@ Note: Integration of steps 2 and 3 into a single workflow is planned for future 
 
 ### Core Conversion Tools
 - **`isyntax2pyramidaltiff.py`** - 🚀 **Direct converter** (single-step iSyntax → Pyramidal TIFF)
+- **`batch_direct_convert.py`** - 🚀 **Batch direct converter** (parallel processing of multiple files)
+- **`batch_convert.sh`** - 🚀 **Batch converter wrapper** (easy-to-use shell interface)
 - `ome2pyramidaltiff.py` - Pyramidal TIFF conversion utility (optimized for traditional pipeline)
 
 ### Traditional Pipeline
 - `local_convert.sh` - Traditional 3-step conversion script
 
+### Dependencies
+- `isyntax2raw/` - Git submodule linking to official Glencoe Software repository
+
 ### Setup Files
 - `local_setup_files_for_ubuntu24.04/` - Local setup documentation and scripts
 - `environment_installment/` - HPC environment setup instructions and scripts
 
-### HPC Batch Processing
+### HPC Batch Processing (Legacy)
 - `batchrun.sh` - SLURM script for iSyntax to OME-TIFF conversion
 - `batchrun_ome2pyramidal.sh` - SLURM script for OME-TIFF to pyramidal TIFF conversion
 
@@ -195,6 +232,53 @@ optional arguments:
   --quality QUALITY        JPEG quality 1-100 (default: 75)
   --pyramid-512           Generate additional 512x512 tiled pyramid
   --debug                 Enable debug logging
+```
+
+### `batch_direct_convert.py` Options
+
+```
+usage: batch_direct_convert.py [-h] [--file-workers FILE_WORKERS]
+                               [--conversion-workers CONVERSION_WORKERS]
+                               [--tile-size TILE_SIZE] [--batch-size BATCH_SIZE]
+                               [--compression {jpeg,lzw,deflate,none}] [--quality QUALITY]
+                               [--pyramid-512] [--extensions EXTENSIONS [EXTENSIONS ...]]
+                               [--no-skip-existing] [--debug]
+                               input_dir output_dir
+
+positional arguments:
+  input_dir             Input directory containing iSyntax files
+  output_dir            Output directory for pyramidal TIFF files
+
+optional arguments:
+  --file-workers FILE_WORKERS    Number of files to process in parallel (default: 2)
+  --conversion-workers CONVERSION_WORKERS
+                                Number of worker threads per file (default: 4)
+  --tile-size TILE_SIZE         Tile size for processing (default: 1024)
+  --batch-size BATCH_SIZE       Number of patches per batch (default: 250)
+  --compression {jpeg,lzw,deflate,none}
+                                TIFF compression type (default: jpeg)
+  --quality QUALITY             JPEG quality 1-100 (default: 75)
+  --pyramid-512                Generate additional 512x512 tiled pyramid
+  --extensions EXTENSIONS       File extensions to process (default: .isyntax .i2syntax)
+  --no-skip-existing           Process files even if output already exists
+  --debug                      Enable debug logging
+```
+
+### `batch_convert.sh` Options
+
+```
+Usage: batch_convert.sh INPUT_DIR OUTPUT_DIR [OPTIONS]
+
+Options:
+  -j, --file-workers N   Number of files to process in parallel (default: 2)
+  -w, --workers N        Number of worker threads per file (default: 8)
+  -t, --tile-size N      Tile size for processing (default: 1024)
+  -c, --compression TYPE Compression: jpeg,lzw,deflate,none (default: jpeg)
+  -q, --quality N        JPEG quality 1-100 (default: 75)
+  --pyramid-512          Generate additional 512x512 tiled pyramid
+  --no-skip-existing     Process files even if output exists
+  --debug                Enable debug logging
+  -h, --help             Show help message
 ```
 
 ## Contributing
