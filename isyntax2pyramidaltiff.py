@@ -58,7 +58,7 @@ class ISyntax2PyramidalTIFF:
     """Direct iSyntax to Pyramidal TIFF converter"""
     
     def __init__(self, input_path, output_path, tile_size=1024, max_workers=4, 
-                 batch_size=250, fill_color=0, compression="jpeg", quality=80, pyramid_512=False):
+                 batch_size=250, fill_color=255, compression="jpeg", quality=80, pyramid_512=False):
         """
         Initialize the converter
         
@@ -68,7 +68,7 @@ class ISyntax2PyramidalTIFF:
             tile_size: Tile size for processing (default: 1024)
             max_workers: Maximum number of worker threads (default: 4)
             batch_size: Number of patches per batch (default: 250)
-            fill_color: Background color for missing tiles (default: 0)
+            fill_color: Background color for missing tiles (default: 255)
             compression: TIFF compression type (default: "jpeg")
             quality: JPEG quality 1-100 (default: 75)
             pyramid_512: Generate additional 512x512 tiled pyramid (default: False)
@@ -210,6 +210,124 @@ class ISyntax2PyramidalTIFF:
             v.shape = (tile_height, tile_width)
         return np.array([r, g, b])
 
+    def extract_macro_image(self):
+        """Extract macro image if available"""
+        try:
+            macro = self.find_image_type("MACROIMAGE")
+            if macro is None:
+                log.info("No macro image found")
+                return None
+                
+            log.info("Extracting macro image...")
+            
+            # Get macro image dimensions
+            dim_ranges = self.dimension_ranges(macro, 0)
+            width = self.get_size(dim_ranges[0])
+            height = self.get_size(dim_ranges[1])
+            
+            log.info(f"Macro image dimensions: {width} x {height}")
+            
+            # Create a single patch covering the entire macro image
+            patch = [dim_ranges[0][0], dim_ranges[0][2] - dim_ranges[0][1], 
+                    dim_ranges[1][0], dim_ranges[1][2] - dim_ranges[1][1], 0]
+            
+            envelopes = self.data_envelopes(macro, 0)
+            pe_in = self.pixel_engine["in"]
+            
+            if self.sdk_v1:
+                request_regions = pe_in.SourceView().requestRegions
+            else:
+                request_regions = macro.source_view.request_regions
+                
+            regions = request_regions([patch], envelopes, True, [self.fill_color] * 3)
+            
+            if regions:
+                regions_ready = self.wait_any(regions)
+                if regions_ready:
+                    region = regions_ready[0]
+                    
+                    # Get pixel data
+                    pixel_buffer_size = width * height * 3
+                    pixels = np.empty(pixel_buffer_size, dtype=np.uint8)
+                    region.get(pixels)
+                    
+                    # Convert to planar format and reshape
+                    planar_pixels = self.make_planar(pixels, width, height)
+                    macro_array = planar_pixels.transpose(1, 2, 0)
+                    
+                    # Create pyvips image
+                    flat_data = macro_array.flatten()
+                    macro_vips = pyvips.Image.new_from_memory(
+                        flat_data.tobytes(), width, height, 3, 'uchar'
+                    )
+                    
+                    log.info("Macro image extracted successfully")
+                    return macro_vips
+                    
+        except Exception as e:
+            log.warning(f"Failed to extract macro image: {e}")
+            
+        return None
+
+    def extract_label_image(self):
+        """Extract label image if available"""
+        try:
+            label = self.find_image_type("LABELIMAGE")
+            if label is None:
+                log.info("No label image found")
+                return None
+                
+            log.info("Extracting label image...")
+            
+            # Get label image dimensions
+            dim_ranges = self.dimension_ranges(label, 0)
+            width = self.get_size(dim_ranges[0])
+            height = self.get_size(dim_ranges[1])
+            
+            log.info(f"Label image dimensions: {width} x {height}")
+            
+            # Create a single patch covering the entire label image
+            patch = [dim_ranges[0][0], dim_ranges[0][2] - dim_ranges[0][1], 
+                    dim_ranges[1][0], dim_ranges[1][2] - dim_ranges[1][1], 0]
+            
+            envelopes = self.data_envelopes(label, 0)
+            pe_in = self.pixel_engine["in"]
+            
+            if self.sdk_v1:
+                request_regions = pe_in.SourceView().requestRegions
+            else:
+                request_regions = label.source_view.request_regions
+                
+            regions = request_regions([patch], envelopes, True, [self.fill_color] * 3)
+            
+            if regions:
+                regions_ready = self.wait_any(regions)
+                if regions_ready:
+                    region = regions_ready[0]
+                    
+                    # Get pixel data
+                    pixel_buffer_size = width * height * 3
+                    pixels = np.empty(pixel_buffer_size, dtype=np.uint8)
+                    region.get(pixels)
+                    
+                    # Convert to planar format and reshape
+                    planar_pixels = self.make_planar(pixels, width, height)
+                    label_array = planar_pixels.transpose(1, 2, 0)
+                    
+                    # Create pyvips image
+                    flat_data = label_array.flatten()
+                    label_vips = pyvips.Image.new_from_memory(
+                        flat_data.tobytes(), width, height, 3, 'uchar'
+                    )
+                    
+                    log.info("Label image extracted successfully")
+                    return label_vips
+                    
+        except Exception as e:
+            log.warning(f"Failed to extract label image: {e}")
+            
+        return None
+
     def convert(self):
         """Convert iSyntax file to pyramidal TIFF"""
         log.info("Starting iSyntax to Pyramidal TIFF conversion...")
@@ -226,9 +344,13 @@ class ISyntax2PyramidalTIFF:
         log.info("Creating pyvips image...")
         vips_image = self.create_vips_image(image_array)
         
+        # Extract macro and label images
+        macro_image = self.extract_macro_image()
+        label_image = self.extract_label_image()
+        
         # Save as pyramidal TIFF
         log.info(f"Saving pyramidal TIFF: {self.output_path}")
-        self.save_pyramidal_tiff(vips_image)
+        self.save_pyramidal_tiff(vips_image, macro_image, label_image)
         
         log.info("Conversion completed successfully!")
 
@@ -389,8 +511,8 @@ class ISyntax2PyramidalTIFF:
         
         return vips_image
 
-    def save_pyramidal_tiff(self, vips_image):
-        """Save pyvips image as pyramidal TIFF with proper metadata"""
+    def save_pyramidal_tiff(self, vips_image, macro_image=None, label_image=None):
+        """Save pyvips image as pyramidal TIFF with proper metadata and associated images"""
         
         # Set resolution metadata (pixels per unit)
         # Convert from micrometers to pixels per cm: 1cm = 10000µm
@@ -430,8 +552,91 @@ class ISyntax2PyramidalTIFF:
         log.info(f"Saving with compression: {self.compression}")
         log.info(f"Tile size: {self.tile_size}x{self.tile_size}")
         
-        # Save primary pyramid
-        vips_image.tiffsave(self.output_path, **save_params)
+        # Prepare images for multi-page TIFF
+        images_to_save = [vips_image]
+        image_descriptions = ["WSI"]
+        
+        # Add macro image if available
+        if macro_image is not None:
+            images_to_save.append(macro_image)
+            image_descriptions.append("MACRO")
+            log.info("Adding macro image to TIFF")
+        
+        # Add label image if available
+        if label_image is not None:
+            images_to_save.append(label_image)
+            image_descriptions.append("LABEL")
+            log.info("Adding label image to TIFF")
+        
+        # Save primary pyramid with associated images
+        if len(images_to_save) == 1:
+            # Single image - save normally
+            vips_image.tiffsave(self.output_path, **save_params)
+        else:
+            # Multi-page TIFF with macro/label images
+            log.info(f"Saving multi-page TIFF with {len(images_to_save)} images")
+            
+            # Create temporary files for each image
+            temp_files = []
+            try:
+                import tempfile
+                
+                # Save main image
+                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                    main_temp = tmp.name
+                    temp_files.append(main_temp)
+                vips_image.tiffsave(main_temp, **save_params)
+                
+                # Save macro image if present
+                if macro_image is not None:
+                    with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                        macro_temp = tmp.name
+                        temp_files.append(macro_temp)
+                    macro_save_params = {
+                        'compression': save_params['compression'],
+                        'bigtiff': True
+                    }
+                    if 'Q' in save_params:
+                        macro_save_params['Q'] = save_params['Q']
+                    macro_image.tiffsave(macro_temp, **macro_save_params)
+                
+                # Save label image if present
+                if label_image is not None:
+                    with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                        label_temp = tmp.name
+                        temp_files.append(label_temp)
+                    label_save_params = {
+                        'compression': save_params['compression'],
+                        'bigtiff': True
+                    }
+                    if 'Q' in save_params:
+                        label_save_params['Q'] = save_params['Q']
+                    label_image.tiffsave(label_temp, **label_save_params)
+                
+                # Combine into multi-page TIFF using tiffcp
+                import subprocess
+                tiffcp_cmd = ['tiffcp'] + temp_files + [self.output_path]
+                result = subprocess.run(tiffcp_cmd, capture_output=True, text=True)
+                
+                if result.returncode != 0:
+                    log.warning(f"tiffcp failed: {result.stderr}")
+                    log.info("Falling back to single-page TIFF")
+                    vips_image.tiffsave(self.output_path, **save_params)
+                else:
+                    log.info("Multi-page TIFF created successfully")
+                    
+            except Exception as e:
+                log.warning(f"Failed to create multi-page TIFF: {e}")
+                log.info("Falling back to single-page TIFF")
+                vips_image.tiffsave(self.output_path, **save_params)
+            finally:
+                # Clean up temporary files
+                import os
+                for temp_file in temp_files:
+                    try:
+                        os.unlink(temp_file)
+                    except:
+                        pass
         
         # Save additional 512x512 tiled pyramid if requested
         if self.pyramid_512:
@@ -463,8 +668,8 @@ def main():
                        help='Maximum number of worker threads (default: 4)')
     parser.add_argument('--batch-size', type=int, default=250,
                        help='Number of patches per batch (default: 250)')
-    parser.add_argument('--fill-color', type=int, default=0,
-                       help='Background color for missing tiles (default: 0)')
+    parser.add_argument('--fill-color', type=int, default=255,
+                       help='Background color for missing tiles (default: 255)')
     parser.add_argument('--compression', choices=['jpeg', 'lzw', 'deflate', 'none'],
                        default='jpeg', help='TIFF compression type (default: jpeg)')
     parser.add_argument('--quality', type=int, default=75,

@@ -53,7 +53,20 @@ def find_isyntax_files(input_dir: Path, extensions: List[str] = None) -> List[Pa
 
 def generate_output_path(input_file: Path, output_dir: Path, suffix: str = "") -> Path:
     """Generate output path for converted file"""
-    output_name = input_file.stem + suffix + ".tiff"
+    # Clean filename to avoid issues with special characters
+    clean_stem = input_file.stem
+    
+    # Replace problematic characters that might cause file system issues
+    problematic_chars = ['(', ')', '[', ']', '{', '}', '<', '>', '|', '&', ';', '*', '?', '"', "'"]
+    for char in problematic_chars:
+        clean_stem = clean_stem.replace(char, '_')
+    
+    # Remove multiple consecutive underscores
+    import re
+    clean_stem = re.sub(r'_+', '_', clean_stem)
+    clean_stem = clean_stem.strip('_')
+    
+    output_name = clean_stem + suffix + ".tiff"
     return output_dir / output_name
 
 
