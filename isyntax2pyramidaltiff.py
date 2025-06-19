@@ -598,10 +598,13 @@ class ISyntax2PyramidalTIFF:
                     temp_files.append(macro_temp)
                 
                 # Use strip-based storage for associated images (like original TIFF)
+                # Force strip mode by setting page_height to image height
                 macro_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False
+                    'tile': False,
+                    'page_height': macro_image.height,  # This should force strip mode
+                    'properties': False  # Don't write properties to avoid extra metadata
                 }
                 if 'Q' in save_params:
                     macro_params['Q'] = save_params['Q']
@@ -616,10 +619,13 @@ class ISyntax2PyramidalTIFF:
                     temp_files.append(label_temp)
                 
                 # Use strip-based storage for associated images (like original TIFF)
+                # Force strip mode by setting page_height to image height
                 label_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False
+                    'tile': False,
+                    'page_height': label_image.height,  # This should force strip mode
+                    'properties': False  # Don't write properties to avoid extra metadata
                 }
                 if 'Q' in save_params:
                     label_params['Q'] = save_params['Q']
