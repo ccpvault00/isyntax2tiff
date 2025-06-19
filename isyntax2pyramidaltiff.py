@@ -601,8 +601,8 @@ class ISyntax2PyramidalTIFF:
                 macro_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False,  # Use strips, not tiles
-                    'strip': True   # Explicitly use strip storage
+                    'tile': False,
+                    'strip_height': macro_image.height  # Force strip mode with full height
                 }
                 if 'Q' in save_params:
                     macro_params['Q'] = save_params['Q']
@@ -620,8 +620,8 @@ class ISyntax2PyramidalTIFF:
                 label_params = {
                     'compression': 'jpeg',
                     'bigtiff': False,
-                    'tile': False,  # Use strips, not tiles
-                    'strip': True   # Explicitly use strip storage
+                    'tile': False,
+                    'strip_height': label_image.height  # Force strip mode with full height
                 }
                 if 'Q' in save_params:
                     label_params['Q'] = save_params['Q']
@@ -667,18 +667,26 @@ class ISyntax2PyramidalTIFF:
                     if tiffinfo_result.returncode == 0:
                         directory_count = tiffinfo_result.stdout.count('TIFF directory')
                         
-                        # Set SubfileType=1 (reduced-resolution) for last two directories (macro and label)
+                        # Set SubfileType=1 (reduced-resolution) and ImageDescription for associated images
                         if macro_image is not None:
                             macro_dir = directory_count - (2 if label_image is not None else 1)
+                            # Set SubfileType=1 (reduced-resolution)
                             subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '254', '1', self.output_path],
                                          capture_output=True)
-                            log.info(f"Set macro image (directory {macro_dir}) as reduced-resolution")
+                            # Set ImageDescription for QuPath recognition
+                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '270', 'Macro', self.output_path],
+                                         capture_output=True)
+                            log.info(f"Set macro image (directory {macro_dir}) as associated image")
                         
                         if label_image is not None:
                             label_dir = directory_count - 1
+                            # Set SubfileType=1 (reduced-resolution)
                             subprocess.run(['tiffset', '-d', str(label_dir), '-s', '254', '1', self.output_path],
                                          capture_output=True)
-                            log.info(f"Set label image (directory {label_dir}) as reduced-resolution")
+                            # Set ImageDescription for QuPath recognition
+                            subprocess.run(['tiffset', '-d', str(label_dir), '-s', '270', 'Label', self.output_path],
+                                         capture_output=True)
+                            log.info(f"Set label image (directory {label_dir}) as associated image")
                 
                 except Exception as e:
                     log.warning(f"Failed to set Subfile Type tags: {e}")
