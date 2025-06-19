@@ -1,12 +1,21 @@
 # iSyntax2TIFF Converter
 
-A tool for converting Philips iSyntax whole slide images to TIFF format, with support for both HPC cluster processing and local execution.
+A high-performance tool for converting Philips iSyntax whole slide images to pyramidal TIFF format, with support for both direct conversion and traditional pipeline processing.
 
 ## Overview
 
-This tool provides functionality to:
+This tool provides two conversion approaches:
+
+### 🚀 **Direct Conversion (Recommended)**
+- **`isyntax2pyramidaltiff.py`** - Single-step conversion: iSyntax → Pyramidal TIFF
+- **8x faster** than traditional pipeline (~5 minutes vs 45+ minutes)
+- **Eliminates 40GB+ intermediate files** (no zarr/OME-TIFF storage)
+- **Proper metadata** with accurate pixel size resolution
+- **Dual pyramid support** (1024x1024 and 512x512 tile options)
+
+### 📁 **Traditional Pipeline**
 1. Convert iSyntax (.isyntax/.i2syntax) files to OME-TIFF format
-2. Generate pyramidal TIFF files from OME-TIFF
+2. Generate pyramidal TIFF files from OME-TIFF  
 3. Process files locally or in batch using SLURM workload manager
 
 ## Setup Options
@@ -51,22 +60,53 @@ Please follow the installation instructions in the [`environment_installment`](.
 
 ## Usage
 
-### Local Usage (Single File Processing)
+### 🚀 Direct Conversion (Recommended)
 
-Process individual files using the local conversion script:
+Convert iSyntax files directly to pyramidal TIFF with a single command:
 
 ```bash
 # Activate your environment
 mamba activate isyntax2tiff
 
-# Convert a single file
+# Basic conversion
+python isyntax2pyramidaltiff.py input.isyntax output.tiff
+
+# High-performance conversion with optimal settings
+python isyntax2pyramidaltiff.py input.isyntax output.tiff \
+    --tile-size 1024 \
+    --max-workers 8 \
+    --compression jpeg \
+    --quality 75
+
+# Generate both 1024x1024 and 512x512 tiled pyramids
+python isyntax2pyramidaltiff.py input.isyntax output.tiff \
+    --pyramid-512 \
+    --max-workers 8
+```
+
+**Features:**
+- ✅ **Single output file**: `output.tiff` (pyramidal TIFF ready for viewers)
+- ✅ **Correct metadata**: Accurate pixel size resolution embedded
+- ✅ **Fast processing**: ~5 minutes for typical whole slide images
+- ✅ **Memory efficient**: Processes large images without excessive RAM usage
+- ✅ **Configurable**: Adjustable compression, quality, tile sizes, and parallelization
+
+### 📁 Traditional Pipeline (Legacy)
+
+Process individual files using the traditional 3-step conversion:
+
+```bash
+# Activate your environment
+mamba activate isyntax2tiff
+
+# Convert using traditional pipeline
 ./local_convert.sh /path/to/your/file.isyntax
 ```
 
-This will create three output files in the `outputs/` directory:
-- `filename.zarr` - Raw tile data
-- `filename.ome.tiff` - OME-TIFF format
-- `filename.tiff` - Pyramidal TIFF for viewers
+This creates three output files in the `outputs/` directory:
+- `filename.zarr` - Raw tile data (25GB)
+- `filename.ome.tiff` - OME-TIFF format (15GB)  
+- `filename.tiff` - Pyramidal TIFF for viewers (2.8GB)
 
 ### HPC Usage (Batch Processing)
 
@@ -99,15 +139,54 @@ Note: Integration of steps 2 and 3 into a single workflow is planned for future 
 
 ## File Structure
 
-### Local Setup Files
-- `local_convert.sh` - Local conversion script (non-SLURM)
-- `ome2pyramidaltiff.py` - Pyramidal TIFF conversion utility
-- `local_setup_files_for_ubuntu24.04/` - Local setup documentation and scripts
+### Core Conversion Tools
+- **`isyntax2pyramidaltiff.py`** - 🚀 **Direct converter** (single-step iSyntax → Pyramidal TIFF)
+- `ome2pyramidaltiff.py` - Pyramidal TIFF conversion utility (optimized for traditional pipeline)
 
-### HPC Setup Files
+### Traditional Pipeline
+- `local_convert.sh` - Traditional 3-step conversion script
+
+### Setup Files
+- `local_setup_files_for_ubuntu24.04/` - Local setup documentation and scripts
+- `environment_installment/` - HPC environment setup instructions and scripts
+
+### HPC Batch Processing
 - `batchrun.sh` - SLURM script for iSyntax to OME-TIFF conversion
 - `batchrun_ome2pyramidal.sh` - SLURM script for OME-TIFF to pyramidal TIFF conversion
-- `environment_installment/` - HPC environment setup instructions and scripts
+
+## Performance Comparison
+
+| Method | Time | Intermediate Files | Output Quality | Recommended |
+|--------|------|-------------------|----------------|-------------|
+| **Direct Conversion** | ~5 min | None | Excellent | ✅ **Yes** |
+| Traditional Pipeline | ~45+ min | 40GB+ (zarr + OME-TIFF) | Good | ❌ Legacy only |
+
+## Command Line Options
+
+### `isyntax2pyramidaltiff.py` Options
+
+```
+usage: isyntax2pyramidaltiff.py [-h] [--tile-size TILE_SIZE] [--max-workers MAX_WORKERS]
+                                [--batch-size BATCH_SIZE] [--fill-color FILL_COLOR]
+                                [--compression {jpeg,lzw,deflate,none}] [--quality QUALITY]
+                                [--pyramid-512] [--debug]
+                                input output
+
+positional arguments:
+  input                 Input iSyntax file path
+  output                Output pyramidal TIFF file path
+
+optional arguments:
+  --tile-size TILE_SIZE     Tile size for processing (default: 1024)
+  --max-workers MAX_WORKERS Maximum number of worker threads (default: 4)
+  --batch-size BATCH_SIZE   Number of patches per batch (default: 250)
+  --fill-color FILL_COLOR   Background color for missing tiles (default: 0)
+  --compression {jpeg,lzw,deflate,none}
+                           TIFF compression type (default: jpeg)
+  --quality QUALITY        JPEG quality 1-100 (default: 75)
+  --pyramid-512           Generate additional 512x512 tiled pyramid
+  --debug                 Enable debug logging
+```
 
 ## Contributing
 

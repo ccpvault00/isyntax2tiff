@@ -58,7 +58,7 @@ class ISyntax2PyramidalTIFF:
     """Direct iSyntax to Pyramidal TIFF converter"""
     
     def __init__(self, input_path, output_path, tile_size=1024, max_workers=4, 
-                 batch_size=250, fill_color=0, compression="jpeg", quality=80):
+                 batch_size=250, fill_color=0, compression="jpeg", quality=80, pyramid_512=False):
         """
         Initialize the converter
         
@@ -71,6 +71,7 @@ class ISyntax2PyramidalTIFF:
             fill_color: Background color for missing tiles (default: 0)
             compression: TIFF compression type (default: "jpeg")
             quality: JPEG quality 1-100 (default: 75)
+            pyramid_512: Generate additional 512x512 tiled pyramid (default: False)
         """
         self.input_path = input_path
         self.output_path = output_path
@@ -80,6 +81,7 @@ class ISyntax2PyramidalTIFF:
         self.fill_color = fill_color
         self.compression = compression
         self.quality = quality
+        self.pyramid_512 = pyramid_512
         
         # Initialize Philips PixelEngine
         render_context = softwarerendercontext.SoftwareRenderContext()
@@ -388,13 +390,29 @@ class ISyntax2PyramidalTIFF:
         return vips_image
 
     def save_pyramidal_tiff(self, vips_image):
-        """Save pyvips image as pyramidal TIFF"""
+        """Save pyvips image as pyramidal TIFF with proper metadata"""
+        
+        # Set resolution metadata (pixels per unit)
+        # Convert from micrometers to pixels per cm: 1cm = 10000µm
+        pixels_per_cm_x = 10000.0 / self.pixel_size_x if self.pixel_size_x > 0 else 1.0
+        pixels_per_cm_y = 10000.0 / self.pixel_size_y if self.pixel_size_y > 0 else 1.0
+        
+        # Set TIFF resolution metadata
+        # pyvips will automatically set resolution metadata when saving TIFF
+        # We'll pass it through the save parameters instead
+        
+        log.info(f"Setting pixel size metadata: {self.pixel_size_x} x {self.pixel_size_y} µm")
+        log.info(f"Resolution: {pixels_per_cm_x:.2f} x {pixels_per_cm_y:.2f} pixels/cm")
+        
         save_params = {
             'tile': True,
             'tile_width': self.tile_size,
             'tile_height': self.tile_size,
             'pyramid': True,
-            'bigtiff': True
+            'bigtiff': True,
+            'xres': pixels_per_cm_x,  # Resolution in pixels/cm
+            'yres': pixels_per_cm_y,  # Resolution in pixels/cm
+            'resunit': 'cm'  # Resolution unit: centimeters
         }
         
         if self.compression.lower() == 'jpeg':
@@ -412,7 +430,25 @@ class ISyntax2PyramidalTIFF:
         log.info(f"Saving with compression: {self.compression}")
         log.info(f"Tile size: {self.tile_size}x{self.tile_size}")
         
+        # Save primary pyramid
         vips_image.tiffsave(self.output_path, **save_params)
+        
+        # Save additional 512x512 tiled pyramid if requested
+        if self.pyramid_512:
+            if self.output_path.endswith('.tiff'):
+                output_512 = self.output_path.replace('.tiff', '_512.tiff')
+            elif self.output_path.endswith('.tif'):
+                output_512 = self.output_path.replace('.tif', '_512.tif')
+            else:
+                output_512 = self.output_path + '_512.tiff'
+            save_params_512 = save_params.copy()
+            save_params_512.update({
+                'tile_width': 512,
+                'tile_height': 512
+            })
+            
+            log.info(f"Saving additional 512x512 pyramid: {output_512}")
+            vips_image.tiffsave(output_512, **save_params_512)
 
 
 def main():
@@ -433,6 +469,8 @@ def main():
                        default='jpeg', help='TIFF compression type (default: jpeg)')
     parser.add_argument('--quality', type=int, default=75,
                        help='JPEG quality 1-100 (default: 75)')
+    parser.add_argument('--pyramid-512', action='store_true',
+                       help='Generate additional 512x512 tiled pyramid')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     
@@ -449,7 +487,8 @@ def main():
         batch_size=args.batch_size,
         fill_color=args.fill_color,
         compression=args.compression,
-        quality=args.quality
+        quality=args.quality,
+        pyramid_512=args.pyramid_512
     ) as converter:
         converter.convert()
 
