@@ -100,16 +100,20 @@ def convert_single_file(
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Convert the file
-        with ISyntax2PyramidalTIFF(
-            str(input_file), str(output_file),
-            tile_size=tile_size,
-            max_workers=max_workers,
-            batch_size=batch_size,
-            compression=compression,
-            quality=quality,
-            pyramid_512=pyramid_512
-        ) as converter:
-            converter.convert()
+        try:
+            with ISyntax2PyramidalTIFF(
+                str(input_file), str(output_file),
+                tile_size=tile_size,
+                max_workers=max_workers,
+                batch_size=batch_size,
+                compression=compression,
+                quality=quality,
+                pyramid_512=pyramid_512
+            ) as converter:
+                converter.convert()
+        except Exception as e:
+            # Re-raise the exception to be handled by the caller
+            raise RuntimeError(f"Conversion failed for {input_file.name}: {str(e)}") from e
         
         duration = time.time() - start_time
         return True, f"Converted successfully: {output_file.name}", duration

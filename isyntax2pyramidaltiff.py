@@ -551,39 +551,13 @@ class ISyntax2PyramidalTIFF:
             image_descriptions.append("LABEL")
             log.info("Adding label image to TIFF")
         
-        # Save primary pyramid (always save the main WSI image first)
-        vips_image.tiffsave(self.output_path, **save_params)
-        
-        # Save macro and label images as separate files for better compatibility
-        if macro_image is not None:
-            macro_path = self.output_path.replace('.tiff', '_macro.tiff').replace('.tif', '_macro.tif')
-            if not macro_path.endswith('.tiff') and not macro_path.endswith('.tif'):
-                macro_path = self.output_path + '_macro.tiff'
-            
-            macro_save_params = {
-                'compression': save_params['compression'],
-                'bigtiff': False  # Macro images are usually small
-            }
-            if 'Q' in save_params:
-                macro_save_params['Q'] = save_params['Q']
-            
-            macro_image.tiffsave(macro_path, **macro_save_params)
-            log.info(f"Saved macro image: {macro_path}")
-        
-        if label_image is not None:
-            label_path = self.output_path.replace('.tiff', '_label.tiff').replace('.tif', '_label.tif')
-            if not label_path.endswith('.tiff') and not label_path.endswith('.tif'):
-                label_path = self.output_path + '_label.tiff'
-            
-            label_save_params = {
-                'compression': save_params['compression'],
-                'bigtiff': False  # Label images are usually small
-            }
-            if 'Q' in save_params:
-                label_save_params['Q'] = save_params['Q']
-            
-            label_image.tiffsave(label_path, **label_save_params)
-            log.info(f"Saved label image: {label_path}")
+        # Create multi-directory TIFF with embedded macro and label images
+        if macro_image is not None or label_image is not None:
+            log.info("Creating multi-directory TIFF with embedded associated images...")
+            self.save_multi_directory_tiff(vips_image, macro_image, label_image, save_params)
+        else:
+            # Save simple pyramid if no associated images
+            vips_image.tiffsave(self.output_path, **save_params)
         
         # Save additional 512x512 tiled pyramid if requested
         if self.pyramid_512:
@@ -601,6 +575,99 @@ class ISyntax2PyramidalTIFF:
             
             log.info(f"Saving additional 512x512 pyramid: {output_512}")
             vips_image.tiffsave(output_512, **save_params_512)
+
+    def save_multi_directory_tiff(self, vips_image, macro_image, label_image, save_params):
+        """Save multi-directory TIFF with embedded macro and label images"""
+        import tempfile
+        import subprocess
+        import os
+        
+        temp_files = []
+        try:
+            # Save main pyramid to temporary file
+            with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                main_temp = tmp.name
+                temp_files.append(main_temp)
+            vips_image.tiffsave(main_temp, **save_params)
+            
+            # Save macro image to temporary file if present
+            macro_temp = None
+            if macro_image is not None:
+                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                    macro_temp = tmp.name
+                    temp_files.append(macro_temp)
+                
+                # Use simple compression for associated images
+                macro_params = {
+                    'compression': 'jpeg' if save_params['compression'] == 'jpeg' else 'lzw',
+                    'bigtiff': False
+                }
+                if save_params['compression'] == 'jpeg' and 'Q' in save_params:
+                    macro_params['Q'] = save_params['Q']
+                
+                macro_image.tiffsave(macro_temp, **macro_params)
+            
+            # Save label image to temporary file if present
+            label_temp = None
+            if label_image is not None:
+                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                    label_temp = tmp.name
+                    temp_files.append(label_temp)
+                
+                # Use simple compression for associated images
+                label_params = {
+                    'compression': 'jpeg' if save_params['compression'] == 'jpeg' else 'lzw',
+                    'bigtiff': False
+                }
+                if save_params['compression'] == 'jpeg' and 'Q' in save_params:
+                    label_params['Q'] = save_params['Q']
+                
+                label_image.tiffsave(label_temp, **label_params)
+            
+            # Use tiffcp to combine into multi-directory TIFF with increased memory limit
+            tiffcp_cmd = ['tiffcp', '-m', '0']  # Set unlimited memory
+            
+            # Add main image first
+            tiffcp_cmd.append(main_temp)
+            
+            # Add macro image if present
+            if macro_temp is not None:
+                tiffcp_cmd.append(macro_temp)
+                log.info("Adding macro image to multi-directory TIFF")
+            
+            # Add label image if present  
+            if label_temp is not None:
+                tiffcp_cmd.append(label_temp)
+                log.info("Adding label image to multi-directory TIFF")
+            
+            # Output file
+            tiffcp_cmd.append(self.output_path)
+            
+            log.info(f"Combining with tiffcp: {' '.join(tiffcp_cmd[1:])}")
+            result = subprocess.run(tiffcp_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                log.error(f"tiffcp failed: {result.stderr}")
+                log.info("Falling back to main image only")
+                # Copy main image as fallback
+                import shutil
+                shutil.copy2(main_temp, self.output_path)
+            else:
+                log.info("Multi-directory TIFF created successfully")
+                
+        except Exception as e:
+            log.error(f"Failed to create multi-directory TIFF: {e}")
+            log.info("Falling back to main image only")
+            # Fallback to simple save
+            vips_image.tiffsave(self.output_path, **save_params)
+            
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files:
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
 
 
 def main():
