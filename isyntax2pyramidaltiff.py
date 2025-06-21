@@ -761,16 +761,37 @@ class ISyntax2PyramidalTIFF:
         log.info(f"Saving with compression: {self.compression}")
         log.info(f"Tile size: {self.tile_size}x{self.tile_size}")
         
-        # Save main TIFF with XML metadata
-        vips_image.tiffsave(self.output_path, **save_params)
+        # Create multi-directory TIFF with embedded macro and label images
+        if macro_image is not None or label_image is not None:
+            log.info("Creating multi-directory TIFF with embedded associated images...")
+            self.save_multi_directory_tiff_with_xml(vips_image, macro_image, label_image, save_params, philips_xml)
+        else:
+            # Save simple pyramid if no associated images
+            vips_image.tiffsave(self.output_path, **save_params)
+            # Set XML metadata for main directory
+            self.set_philips_metadata(philips_xml)
         
-        # Set Philips XML metadata and Software tags using tiffset
-        try:
-            # Write XML to temporary file for tiffset
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as xml_file:
-                xml_file.write(philips_xml)
-                xml_temp_path = xml_file.name
+        
+        # Save additional 512x512 tiled pyramid if requested
+        if self.pyramid_512:
+            if self.output_path.endswith('.tiff'):
+                output_512 = self.output_path.replace('.tiff', '_512.tiff')
+            elif self.output_path.endswith('.tif'):
+                output_512 = self.output_path.replace('.tif', '_512.tif')
+            else:
+                output_512 = self.output_path + '_512.tiff'
+            save_params_512 = save_params.copy()
+            save_params_512.update({
+                'tile_width': 512,
+                'tile_height': 512
+            })
             
+            log.info(f"Saving additional 512x512 pyramid: {output_512}")
+            vips_image.tiffsave(output_512, **save_params_512)
+
+    def set_philips_metadata(self, philips_xml):
+        """Set Philips XML metadata and Software tags using tiffset"""
+        try:
             # Set ImageDescription with Philips XML for first directory
             result = subprocess.run(['tiffset', '-d', '0', '-s', '270', philips_xml, self.output_path],
                                   capture_output=True, text=True)
@@ -778,12 +799,6 @@ class ISyntax2PyramidalTIFF:
                 log.info("Successfully set Philips XML metadata in ImageDescription")
             else:
                 log.error(f"Failed to set XML metadata: {result.stderr}")
-            
-            # Clean up XML temp file
-            try:
-                os.unlink(xml_temp_path)
-            except:
-                pass
             
             # Set Software tag to match Philips format
             subprocess.run(['tiffset', '-d', '0', '-s', '305', 'Philips DP v1.0', self.output_path],
@@ -812,23 +827,232 @@ class ISyntax2PyramidalTIFF:
                 
         except Exception as e:
             log.warning(f"Failed to set TIFF metadata: {e}")
-        
-        # Save additional 512x512 tiled pyramid if requested
-        if self.pyramid_512:
-            if self.output_path.endswith('.tiff'):
-                output_512 = self.output_path.replace('.tiff', '_512.tiff')
-            elif self.output_path.endswith('.tif'):
-                output_512 = self.output_path.replace('.tif', '_512.tif')
-            else:
-                output_512 = self.output_path + '_512.tiff'
-            save_params_512 = save_params.copy()
-            save_params_512.update({
-                'tile_width': 512,
-                'tile_height': 512
-            })
+
+    def save_multi_directory_tiff_with_xml(self, vips_image, macro_image, label_image, save_params, philips_xml):
+        """Save multi-directory TIFF with embedded macro and label images plus XML metadata"""
+        temp_files = []
+        try:
+            # Save main pyramid to temporary file
+            with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                main_temp = tmp.name
+                temp_files.append(main_temp)
+            vips_image.tiffsave(main_temp, **save_params)
             
-            log.info(f"Saving additional 512x512 pyramid: {output_512}")
-            vips_image.tiffsave(output_512, **save_params_512)
+            # Save macro image to temporary file if present
+            macro_temp = None
+            if macro_image is not None:
+                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                    macro_temp = tmp.name
+                    temp_files.append(macro_temp)
+                
+                # Use strip-based storage for associated images (CRITICAL for QuPath recognition)
+                macro_params = {
+                    'compression': 'jpeg',
+                    'bigtiff': False,
+                    'tile': False,  # Explicitly disable tiling
+                    'properties': False  # Don't write properties to avoid extra metadata
+                }
+                if 'Q' in save_params:
+                    macro_params['Q'] = save_params['Q']
+                
+                macro_image.tiffsave(macro_temp, **macro_params)
+                
+                # Convert to strip-based using tiffcp
+                macro_strip_temp = macro_temp + '_strip.tiff'
+                temp_files.append(macro_strip_temp)
+                strip_result = subprocess.run(['tiffcp', '-s', macro_temp, macro_strip_temp], 
+                                            capture_output=True, text=True)
+                if strip_result.returncode == 0:
+                    # Replace the original temp file with strip version
+                    os.rename(macro_strip_temp, macro_temp)
+                    temp_files.remove(macro_strip_temp)
+                    log.info("Converted macro image to strip-based storage")
+                else:
+                    log.warning(f"Failed to convert macro to strips: {strip_result.stderr}")
+                    if macro_strip_temp in temp_files:
+                        temp_files.remove(macro_strip_temp)
+            
+            # Save label image to temporary file if present
+            label_temp = None
+            if label_image is not None:
+                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
+                    label_temp = tmp.name
+                    temp_files.append(label_temp)
+                
+                # Use strip-based storage for associated images (CRITICAL for QuPath recognition)
+                label_params = {
+                    'compression': 'jpeg',
+                    'bigtiff': False,
+                    'tile': False,  # Explicitly disable tiling
+                    'properties': False  # Don't write properties to avoid extra metadata
+                }
+                if 'Q' in save_params:
+                    label_params['Q'] = save_params['Q']
+                
+                label_image.tiffsave(label_temp, **label_params)
+                
+                # Convert to strip-based using tiffcp
+                label_strip_temp = label_temp + '_strip.tiff'
+                temp_files.append(label_strip_temp)
+                strip_result = subprocess.run(['tiffcp', '-s', label_temp, label_strip_temp], 
+                                            capture_output=True, text=True)
+                if strip_result.returncode == 0:
+                    # Replace the original temp file with strip version
+                    os.rename(label_strip_temp, label_temp)
+                    temp_files.remove(label_strip_temp)
+                    log.info("Converted label image to strip-based storage")
+                else:
+                    log.warning(f"Failed to convert label to strips: {strip_result.stderr}")
+                    if label_strip_temp in temp_files:
+                        temp_files.remove(label_strip_temp)
+            
+            # Use tiffcp to combine into multi-directory TIFF
+            tiffcp_cmd = ['tiffcp', '-m', '0']  # Set unlimited memory
+            
+            # CRITICAL: Add main image first to ensure it's Directory 0
+            tiffcp_cmd.append(main_temp)
+            
+            # Add associated images after main pyramid
+            if macro_temp is not None:
+                tiffcp_cmd.append(macro_temp)
+                log.info("Adding macro image to multi-directory TIFF")
+            
+            if label_temp is not None:
+                tiffcp_cmd.append(label_temp)
+                log.info("Adding label image to multi-directory TIFF")
+            
+            # Output file
+            tiffcp_cmd.append(self.output_path)
+            
+            log.info(f"Combining with tiffcp: {' '.join(tiffcp_cmd[1:])}")
+            result = subprocess.run(tiffcp_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                log.error(f"tiffcp failed: {result.stderr}")
+                log.info("Falling back to main image only")
+                # Copy main image as fallback
+                import shutil
+                shutil.copy2(main_temp, self.output_path)
+                # Set XML metadata for main directory only
+                self.set_philips_metadata(philips_xml)
+            else:
+                log.info("Multi-directory TIFF created successfully")
+                
+                # Set proper TIFF tags for all directories
+                self.set_complete_philips_metadata(philips_xml, macro_image, label_image)
+                
+        except Exception as e:
+            log.error(f"Failed to create multi-directory TIFF: {e}")
+            log.info("Falling back to main image only")
+            # Fallback to simple save
+            vips_image.tiffsave(self.output_path, **save_params)
+            self.set_philips_metadata(philips_xml)
+            
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files:
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+
+    def set_complete_philips_metadata(self, philips_xml, macro_image, label_image):
+        """Set complete Philips metadata for multi-directory TIFF"""
+        try:
+            # Count total directories
+            tiffinfo_result = subprocess.run(['tiffinfo', self.output_path], 
+                                           capture_output=True, text=True)
+            if tiffinfo_result.returncode == 0:
+                directory_count = tiffinfo_result.stdout.count('TIFF directory')
+                log.info(f"Total TIFF directories found: {directory_count}")
+                
+                # Calculate pyramid levels (excluding associated images)
+                pyramid_levels = directory_count
+                if macro_image is not None:
+                    pyramid_levels -= 1
+                if label_image is not None:
+                    pyramid_levels -= 1
+                
+                log.info(f"Pyramid levels: {pyramid_levels}, Associated images: {directory_count - pyramid_levels}")
+                
+                # Set ImageDescription with Philips XML for first directory
+                result = subprocess.run(['tiffset', '-d', '0', '-s', '270', philips_xml, self.output_path],
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    log.info("Successfully set Philips XML metadata in first directory")
+                else:
+                    log.error(f"Failed to set XML metadata: {result.stderr}")
+                
+                # Set SubfileType=0 and Software tag for all pyramid levels
+                for level in range(pyramid_levels):
+                    # Set SubfileType=0 (full-resolution image for pyramid)
+                    subprocess.run(['tiffset', '-d', str(level), '-s', '254', '0', self.output_path],
+                                 capture_output=True)
+                    # Set Software tag
+                    subprocess.run(['tiffset', '-d', str(level), '-s', '305', 'Philips DP v1.0', self.output_path],
+                                 capture_output=True)
+                    
+                    if level > 0:  # Don't overwrite XML in first directory
+                        mag = 40 / (2 ** level)  # Assuming 40x base magnification
+                        level_desc = f"level={level} mag={mag} quality={self.quality}"
+                        subprocess.run(['tiffset', '-d', str(level), '-s', '270', level_desc, self.output_path],
+                                     capture_output=True)
+                
+                # Set metadata for associated images
+                if macro_image is not None:
+                    macro_dir = directory_count - (2 if label_image is not None else 1)
+                    log.info(f"Setting macro image metadata for directory {macro_dir}")
+                    
+                    # Set SubfileType=1 (reduced-resolution/thumbnail)
+                    result = subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '254', '1', self.output_path],
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        log.info(f"Successfully set SubfileType=1 for macro directory {macro_dir}")
+                    
+                    # Create Philips-style macro description
+                    macro_pixel_size = self.pixel_size_x * (self.size_x / macro_image.width) / 1000.0  # Convert to mm
+                    macro_desc = f"Macro -offset=(0,0)-pixelsize=({macro_pixel_size:.4f},{macro_pixel_size:.4f})-rois=((0,0,{self.size_x},{self.size_y}),({self.size_x},0,{macro_image.width},{macro_image.height}))"
+                    
+                    # Set ImageDescription
+                    subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '270', macro_desc, self.output_path],
+                                 capture_output=True)
+                    # Set Software tag
+                    subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '305', 'Philips DP v1.0', self.output_path],
+                                 capture_output=True)
+                    # Set resolution to (1,1) to distinguish from pyramid levels
+                    subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '282', '1.0', self.output_path],
+                                 capture_output=True)
+                    subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '283', '1.0', self.output_path],
+                                 capture_output=True)
+                    
+                    log.info(f"Set macro image metadata: {macro_desc}")
+                
+                if label_image is not None:
+                    label_dir = directory_count - 1
+                    log.info(f"Setting label image metadata for directory {label_dir}")
+                    
+                    # Set SubfileType=1 (reduced-resolution/thumbnail)
+                    result = subprocess.run(['tiffset', '-d', str(label_dir), '-s', '254', '1', self.output_path],
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        log.info(f"Successfully set SubfileType=1 for label directory {label_dir}")
+                    
+                    # Set ImageDescription
+                    subprocess.run(['tiffset', '-d', str(label_dir), '-s', '270', 'Label', self.output_path],
+                                 capture_output=True)
+                    # Set Software tag
+                    subprocess.run(['tiffset', '-d', str(label_dir), '-s', '305', 'Philips DP v1.0', self.output_path],
+                                 capture_output=True)
+                    # Set resolution to (1,1) to distinguish from pyramid levels
+                    subprocess.run(['tiffset', '-d', str(label_dir), '-s', '282', '1.0', self.output_path],
+                                 capture_output=True)
+                    subprocess.run(['tiffset', '-d', str(label_dir), '-s', '283', '1.0', self.output_path],
+                                 capture_output=True)
+                    
+                    log.info(f"Set label image metadata")
+                
+        except Exception as e:
+            log.warning(f"Failed to set complete TIFF metadata: {e}")
 
 
 
