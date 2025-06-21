@@ -22,6 +22,10 @@ from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, wait
 from threading import BoundedSemaphore
 from datetime import datetime
 from dateutil.parser import parse
+import base64
+import tempfile
+import subprocess
+import os
 
 # Set up logging
 logging.basicConfig(
@@ -29,6 +33,169 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s [%(name)16s] (%(thread)10s) %(message)s"
 )
 log = logging.getLogger(__name__)
+
+
+class PhilipsXMLGenerator:
+    """Generate Philips-compatible XML metadata for TIFF files."""
+    
+    def __init__(self):
+        self.scanner_info = {
+            "manufacturer": "PHILIPS",
+            "device_serial": "FMT0411",
+            "software_versions": ["1.8.6824", "20180906_R51", "4.0.3"],
+            "rack_number": 11,
+            "slot_number": 10,
+            "calibration_status": "OK"
+        }
+        
+    def generate_xml(self, 
+                    source_filename: str,
+                    wsi_info: dict,
+                    pyramid_levels: list,
+                    macro_image_data: str = None,
+                    label_image_data: str = None) -> str:
+        """Generate complete Philips XML metadata."""
+        
+        # Generate timestamps
+        now = datetime.now()
+        acquisition_datetime = now.strftime("%Y%m%d%H%M%S.%f")
+        calibration_date = now.strftime("%Y%m%d")
+        calibration_time = now.strftime("%H%M%S")
+        
+        xml_parts = []
+        xml_parts.append('<?xml version="1.0" encoding="UTF-8" ?>')
+        xml_parts.append('<DataObject ObjectType="DPUfsImport">')
+        
+        # Add DICOM header attributes
+        xml_parts.extend(self._generate_dicom_header(
+            acquisition_datetime, calibration_date, calibration_time
+        ))
+        
+        # Add scanned images array
+        xml_parts.append('\t<Attribute Name="PIM_DP_SCANNED_IMAGES" Group="0x301D" Element="0x1003" PMSVR="IDataObjectArray">')
+        xml_parts.append('\t\t<Array>')
+        
+        # Add WSI image
+        xml_parts.extend(self._generate_wsi_image(
+            source_filename, wsi_info, pyramid_levels
+        ))
+        
+        # Add macro image if provided
+        if macro_image_data:
+            xml_parts.extend(self._generate_associated_image(
+                "MACROIMAGE", macro_image_data
+            ))
+        
+        # Add label image if provided
+        if label_image_data:
+            xml_parts.extend(self._generate_associated_image(
+                "LABELIMAGE", label_image_data
+            ))
+        
+        xml_parts.append('\t\t</Array>')
+        xml_parts.append('\t</Attribute>')
+        
+        # Add footer attributes
+        xml_parts.extend(self._generate_footer_attributes())
+        
+        xml_parts.append('</DataObject>')
+        
+        return '\n'.join(xml_parts)
+    
+    def _generate_dicom_header(self, acquisition_datetime: str, 
+                             calibration_date: str, calibration_time: str) -> list:
+        """Generate DICOM header attributes."""
+        return [
+            f'\t<Attribute Name="DICOM_ACQUISITION_DATETIME" Group="0x0008" Element="0x002A" PMSVR="IString">{acquisition_datetime}</Attribute>',
+            f'\t<Attribute Name="DICOM_DATE_OF_LAST_CALIBRATION" Group="0x0018" Element="0x1200" PMSVR="IStringArray">&quot;{calibration_date}&quot;</Attribute>',
+            f'\t<Attribute Name="DICOM_DEVICE_SERIAL_NUMBER" Group="0x0018" Element="0x1000" PMSVR="IString">{self.scanner_info["device_serial"]}</Attribute>',
+            f'\t<Attribute Name="DICOM_MANUFACTURER" Group="0x0008" Element="0x0070" PMSVR="IString">{self.scanner_info["manufacturer"]}</Attribute>',
+            f'\t<Attribute Name="DICOM_SOFTWARE_VERSIONS" Group="0x0018" Element="0x1020" PMSVR="IStringArray">&quot;{self.scanner_info["software_versions"][0]}&quot; &quot;{self.scanner_info["software_versions"][1]}&quot; &quot;{self.scanner_info["software_versions"][2]}&quot;</Attribute>',
+            f'\t<Attribute Name="DICOM_TIME_OF_LAST_CALIBRATION" Group="0x0018" Element="0x1201" PMSVR="IStringArray">&quot;{calibration_time}&quot;</Attribute>',
+            f'\t<Attribute Name="PIIM_DP_SCANNER_CALIBRATION_STATUS" Group="0x101D" Element="0x100A" PMSVR="IString">{self.scanner_info["calibration_status"]}</Attribute>',
+            f'\t<Attribute Name="PIIM_DP_SCANNER_RACK_NUMBER" Group="0x101D" Element="0x1007" PMSVR="IUInt16">{self.scanner_info["rack_number"]}</Attribute>',
+            f'\t<Attribute Name="PIIM_DP_SCANNER_SLOT_NUMBER" Group="0x101D" Element="0x1008" PMSVR="IUInt16">{self.scanner_info["slot_number"]}</Attribute>',
+        ]
+    
+    def _generate_wsi_image(self, source_filename: str, 
+                          wsi_info: dict, 
+                          pyramid_levels: list) -> list:
+        """Generate WSI image XML."""
+        
+        pixel_spacing = wsi_info.get('pixel_spacing', 0.00025)
+        width = wsi_info.get('width', 80896)
+        height = wsi_info.get('height', 21504)
+        
+        xml_parts = []
+        xml_parts.append('\t\t\t<DataObject ObjectType="DPScannedImage">')
+        
+        # Add derivation description
+        derivation_desc = f'tiff-useBigTIFF=0-useRgb=0-levels={len(pyramid_levels)},10002,10000,10001-processing=0-q80-sourceFilename=&quot;{source_filename}&quot;;PHILIPS UFS V1.8.6824 | Quality=2 | DWT=1 | Compressor=16'
+        xml_parts.append(f'\t\t\t\t<Attribute Name="DICOM_DERIVATION_DESCRIPTION" Group="0x0008" Element="0x2111" PMSVR="IString">{derivation_desc}</Attribute>')
+        
+        # Add compression info and image type
+        xml_parts.extend([
+            '\t\t\t\t<Attribute Name="DICOM_LOSSY_IMAGE_COMPRESSION_METHOD" Group="0x0028" Element="0x2114" PMSVR="IStringArray">&quot;PHILIPS_DP_1_0&quot; &quot;PHILIPS_TIFF_1_0&quot;</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_LOSSY_IMAGE_COMPRESSION_RATIO" Group="0x0028" Element="0x2112" PMSVR="IDoubleArray">&quot;3&quot; &quot;3&quot;</Attribute>',
+            '\t\t\t\t<Attribute Name="PIM_DP_IMAGE_TYPE" Group="0x301D" Element="0x1004" PMSVR="IString">WSI</Attribute>',
+            '\t\t\t\t<Attribute Name="UFS_IMAGE_PIXEL_TRANSFORMATION_METHOD" Group="0x301D" Element="0x2013" PMSVR="IString">0</Attribute>',
+        ])
+        
+        # Add DICOM image attributes
+        xml_parts.extend([
+            '\t\t\t\t<Attribute Name="DICOM_BITS_ALLOCATED" Group="0x0028" Element="0x0100" PMSVR="IUInt16">8</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_BITS_STORED" Group="0x0028" Element="0x0101" PMSVR="IUInt16">8</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_HIGH_BIT" Group="0x0028" Element="0x0102" PMSVR="IUInt16">7</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_LOSSY_IMAGE_COMPRESSION" Group="0x0028" Element="0x2110" PMSVR="IString">01</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_PHOTOMETRIC_INTERPRETATION" Group="0x0028" Element="0x0004" PMSVR="IString">RGB</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_PIXEL_REPRESENTATION" Group="0x0028" Element="0x0103" PMSVR="IUInt16">0</Attribute>',
+            f'\t\t\t\t<Attribute Name="DICOM_PIXEL_SPACING" Group="0x0028" Element="0x0030" PMSVR="IDoubleArray">&quot;{pixel_spacing}&quot; &quot;{pixel_spacing}&quot;</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_PLANAR_CONFIGURATION" Group="0x0028" Element="0x0006" PMSVR="IUInt16">0</Attribute>',
+            '\t\t\t\t<Attribute Name="DICOM_SAMPLES_PER_PIXEL" Group="0x0028" Element="0x0002" PMSVR="IUInt16">3</Attribute>',
+        ])
+        
+        # Add pixel data representation sequence
+        xml_parts.append('\t\t\t\t<Attribute Name="PIIM_PIXEL_DATA_REPRESENTATION_SEQUENCE" Group="0x1001" Element="0x8B01" PMSVR="IDataObjectArray">')
+        xml_parts.append('\t\t\t\t\t<Array>')
+        
+        for i, level in enumerate(pyramid_levels):
+            level_pixel_spacing = pixel_spacing * (2 ** i)
+            xml_parts.extend([
+                '\t\t\t\t\t\t<DataObject ObjectType="PixelDataRepresentation">',
+                f'\t\t\t\t\t\t\t<Attribute Name="DICOM_PIXEL_SPACING" Group="0x0028" Element="0x0030" PMSVR="IDoubleArray">&quot;{level_pixel_spacing}&quot; &quot;{level_pixel_spacing}&quot;</Attribute>',
+                '\t\t\t\t\t\t\t<Attribute Name="PIIM_DP_PIXEL_DATA_REPRESENTATION_POSITION" Group="0x101D" Element="0x100B" PMSVR="IDoubleArray">&quot;0&quot; &quot;0&quot; &quot;0&quot;</Attribute>',
+                f'\t\t\t\t\t\t\t<Attribute Name="PIIM_PIXEL_DATA_REPRESENTATION_COLUMNS" Group="0x2001" Element="0x115E" PMSVR="IUInt32">{level["width"]}</Attribute>',
+                f'\t\t\t\t\t\t\t<Attribute Name="PIIM_PIXEL_DATA_REPRESENTATION_NUMBER" Group="0x1001" Element="0x8B02" PMSVR="IUInt16">{i}</Attribute>',
+                f'\t\t\t\t\t\t\t<Attribute Name="PIIM_PIXEL_DATA_REPRESENTATION_ROWS" Group="0x2001" Element="0x115D" PMSVR="IUInt32">{level["height"]}</Attribute>',
+                '\t\t\t\t\t\t</DataObject>',
+            ])
+        
+        xml_parts.extend([
+            '\t\t\t\t\t</Array>',
+            '\t\t\t\t</Attribute>',
+            f'\t\t\t\t<Attribute Name="PIM_DP_IMAGE_COLUMNS" Group="0x301D" Element="0x1007" PMSVR="IUInt32">{width}</Attribute>',
+            f'\t\t\t\t<Attribute Name="PIM_DP_IMAGE_ROWS" Group="0x301D" Element="0x1006" PMSVR="IUInt32">{height}</Attribute>',
+            '\t\t\t\t<Attribute Name="PIM_DP_SOURCE_FILE" Group="0x301D" Element="0x1000" PMSVR="IString">%FILENAME%</Attribute>',
+            '\t\t\t</DataObject>',
+        ])
+        
+        return xml_parts
+    
+    def _generate_associated_image(self, image_type: str, image_data: str) -> list:
+        """Generate associated image (MACRO or LABEL) XML."""
+        return [
+            '\t\t\t<DataObject ObjectType="DPScannedImage">',
+            f'\t\t\t\t<Attribute Name="PIM_DP_IMAGE_DATA" Group="0x301D" Element="0x1005" PMSVR="IString">{image_data}</Attribute>',
+            f'\t\t\t\t<Attribute Name="PIM_DP_IMAGE_TYPE" Group="0x301D" Element="0x1004" PMSVR="IString">{image_type}</Attribute>',
+            '\t\t\t</DataObject>',
+        ]
+    
+    def _generate_footer_attributes(self) -> list:
+        """Generate footer attributes."""
+        return [
+            '\t<Attribute Name="PIM_DP_UFS_BARCODE" Group="0x301D" Element="0x1002" PMSVR="IString">Generated</Attribute>',
+            '\t<Attribute Name="PIM_DP_UFS_INTERFACE_VERSION" Group="0x301D" Element="0x1001" PMSVR="IString">1.8.6824</Attribute>',
+        ]
 
 class MaxQueuePool(object):
     """Bounded queue thread pool executor from isyntax2raw"""
@@ -82,6 +249,9 @@ class ISyntax2PyramidalTIFF:
         self.compression = compression
         self.quality = quality
         self.pyramid_512 = pyramid_512
+        
+        # Initialize XML generator
+        self.xml_generator = PhilipsXMLGenerator()
         
         # Validate input file exists
         import os
@@ -311,6 +481,22 @@ class ISyntax2PyramidalTIFF:
             
         return None
 
+    def vips_image_to_base64_jpeg(self, vips_image):
+        """Convert a pyvips image to Base64-encoded JPEG string."""
+        try:
+            # Save as JPEG to memory buffer
+            jpeg_buffer = vips_image.jpegsave_buffer(Q=self.quality)
+            
+            # Encode to Base64
+            base64_data = base64.b64encode(jpeg_buffer).decode('utf-8')
+            
+            log.info(f"Converted image to Base64 JPEG ({len(base64_data)} chars)")
+            return base64_data
+            
+        except Exception as e:
+            log.error(f"Failed to convert image to Base64: {e}")
+            return None
+
     def convert(self):
         """Convert iSyntax file to pyramidal TIFF"""
         log.info("Starting iSyntax to Pyramidal TIFF conversion...")
@@ -495,20 +681,60 @@ class ISyntax2PyramidalTIFF:
         return vips_image
 
     def save_pyramidal_tiff(self, vips_image, macro_image=None, label_image=None):
-        """Save pyvips image as pyramidal TIFF with proper metadata and associated images"""
+        """Save pyvips image as Philips-compatible pyramidal TIFF with XML metadata"""
         
         # Set resolution metadata (pixels per unit)
         # Convert from micrometers to pixels per cm: 1cm = 10000µm
         pixels_per_cm_x = 10000.0 / self.pixel_size_x if self.pixel_size_x > 0 else 1.0
         pixels_per_cm_y = 10000.0 / self.pixel_size_y if self.pixel_size_y > 0 else 1.0
         
-        # Set TIFF resolution metadata
-        # pyvips will automatically set resolution metadata when saving TIFF
-        # We'll pass it through the save parameters instead
-        
         log.info(f"Setting pixel size metadata: {self.pixel_size_x} x {self.pixel_size_y} µm")
         log.info(f"Resolution: {pixels_per_cm_x:.2f} x {pixels_per_cm_y:.2f} pixels/cm")
         
+        # Generate pyramid information for XML
+        pyramid_levels = []
+        temp_width, temp_height = self.size_x, self.size_y
+        while temp_width >= 256 and temp_height >= 256:
+            pyramid_levels.append({
+                'width': temp_width,
+                'height': temp_height
+            })
+            temp_width //= 2
+            temp_height //= 2
+        
+        log.info(f"Generated {len(pyramid_levels)} pyramid levels for XML metadata")
+        
+        # Convert macro and label images to Base64 if present
+        macro_base64 = None
+        label_base64 = None
+        
+        if macro_image is not None:
+            log.info("Converting macro image to Base64...")
+            macro_base64 = self.vips_image_to_base64_jpeg(macro_image)
+        
+        if label_image is not None:
+            log.info("Converting label image to Base64...")
+            label_base64 = self.vips_image_to_base64_jpeg(label_image)
+        
+        # Generate Philips XML metadata
+        wsi_info = {
+            'width': self.size_x,
+            'height': self.size_y,
+            'pixel_spacing': self.pixel_size_x / 1000.0  # Convert µm to mm
+        }
+        
+        source_filename = os.path.basename(self.input_path)
+        philips_xml = self.xml_generator.generate_xml(
+            source_filename=source_filename,
+            wsi_info=wsi_info,
+            pyramid_levels=pyramid_levels,
+            macro_image_data=macro_base64,
+            label_image_data=label_base64
+        )
+        
+        log.info(f"Generated Philips XML metadata ({len(philips_xml)} characters)")
+        
+        # Save main pyramid (we'll add XML metadata with tiffset afterward)
         save_params = {
             'tile': True,
             'tile_width': self.tile_size,
@@ -517,7 +743,7 @@ class ISyntax2PyramidalTIFF:
             'bigtiff': True,
             'xres': pixels_per_cm_x,  # Resolution in pixels/cm
             'yres': pixels_per_cm_y,  # Resolution in pixels/cm
-            'resunit': 'cm'  # Resolution unit: centimeters
+            'resunit': 'cm',  # Resolution unit: centimeters
         }
         
         if self.compression.lower() == 'jpeg':
@@ -535,29 +761,57 @@ class ISyntax2PyramidalTIFF:
         log.info(f"Saving with compression: {self.compression}")
         log.info(f"Tile size: {self.tile_size}x{self.tile_size}")
         
-        # Prepare images for multi-page TIFF
-        images_to_save = [vips_image]
-        image_descriptions = ["WSI"]
+        # Save main TIFF with XML metadata
+        vips_image.tiffsave(self.output_path, **save_params)
         
-        # Add macro image if available
-        if macro_image is not None:
-            images_to_save.append(macro_image)
-            image_descriptions.append("MACRO")
-            log.info("Adding macro image to TIFF")
-        
-        # Add label image if available
-        if label_image is not None:
-            images_to_save.append(label_image)
-            image_descriptions.append("LABEL")
-            log.info("Adding label image to TIFF")
-        
-        # Create multi-directory TIFF with embedded macro and label images
-        if macro_image is not None or label_image is not None:
-            log.info("Creating multi-directory TIFF with embedded associated images...")
-            self.save_multi_directory_tiff(vips_image, macro_image, label_image, save_params)
-        else:
-            # Save simple pyramid if no associated images
-            vips_image.tiffsave(self.output_path, **save_params)
+        # Set Philips XML metadata and Software tags using tiffset
+        try:
+            # Write XML to temporary file for tiffset
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as xml_file:
+                xml_file.write(philips_xml)
+                xml_temp_path = xml_file.name
+            
+            # Set ImageDescription with Philips XML for first directory
+            result = subprocess.run(['tiffset', '-d', '0', '-s', '270', philips_xml, self.output_path],
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                log.info("Successfully set Philips XML metadata in ImageDescription")
+            else:
+                log.error(f"Failed to set XML metadata: {result.stderr}")
+            
+            # Clean up XML temp file
+            try:
+                os.unlink(xml_temp_path)
+            except:
+                pass
+            
+            # Set Software tag to match Philips format
+            subprocess.run(['tiffset', '-d', '0', '-s', '305', 'Philips DP v1.0', self.output_path],
+                         capture_output=True, check=False)
+            log.info("Set Software tag to 'Philips DP v1.0'")
+            
+            # Set pyramid level descriptions for remaining directories
+            tiffinfo_result = subprocess.run(['tiffinfo', self.output_path], 
+                                           capture_output=True, text=True)
+            if tiffinfo_result.returncode == 0:
+                directory_count = tiffinfo_result.stdout.count('TIFF directory')
+                log.info(f"Setting level descriptions for {directory_count} directories")
+                
+                # Set level descriptions for pyramid levels (excluding first directory with XML)
+                for level in range(1, directory_count):
+                    mag = 40 / (2 ** level)  # Assuming 40x base magnification
+                    level_desc = f"level={level} mag={mag} quality={self.quality}"
+                    result = subprocess.run(['tiffset', '-d', str(level), '-s', '270', level_desc, self.output_path],
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        log.info(f"Set level {level} description: {level_desc}")
+                    
+                    # Set Software tag for each directory
+                    subprocess.run(['tiffset', '-d', str(level), '-s', '305', 'Philips DP v1.0', self.output_path],
+                                 capture_output=True)
+                
+        except Exception as e:
+            log.warning(f"Failed to set TIFF metadata: {e}")
         
         # Save additional 512x512 tiled pyramid if requested
         if self.pyramid_512:
@@ -576,145 +830,6 @@ class ISyntax2PyramidalTIFF:
             log.info(f"Saving additional 512x512 pyramid: {output_512}")
             vips_image.tiffsave(output_512, **save_params_512)
 
-    def save_multi_directory_tiff(self, vips_image, macro_image, label_image, save_params):
-        """Save multi-directory TIFF with embedded macro and label images"""
-        import tempfile
-        import subprocess
-        import os
-        
-        temp_files = []
-        try:
-            # Save main pyramid to temporary file
-            with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
-                main_temp = tmp.name
-                temp_files.append(main_temp)
-            vips_image.tiffsave(main_temp, **save_params)
-            
-            # Save macro image to temporary file if present
-            macro_temp = None
-            if macro_image is not None:
-                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
-                    macro_temp = tmp.name
-                    temp_files.append(macro_temp)
-                
-                # Use strip-based storage for associated images (like original TIFF)
-                # Force strip mode by setting page_height to image height
-                macro_params = {
-                    'compression': 'jpeg',
-                    'bigtiff': False,
-                    'tile': False,
-                    'page_height': macro_image.height,  # This should force strip mode
-                    'properties': False  # Don't write properties to avoid extra metadata
-                }
-                if 'Q' in save_params:
-                    macro_params['Q'] = save_params['Q']
-                
-                macro_image.tiffsave(macro_temp, **macro_params)
-            
-            # Save label image to temporary file if present
-            label_temp = None
-            if label_image is not None:
-                with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp:
-                    label_temp = tmp.name
-                    temp_files.append(label_temp)
-                
-                # Use strip-based storage for associated images (like original TIFF)
-                # Force strip mode by setting page_height to image height
-                label_params = {
-                    'compression': 'jpeg',
-                    'bigtiff': False,
-                    'tile': False,
-                    'page_height': label_image.height,  # This should force strip mode
-                    'properties': False  # Don't write properties to avoid extra metadata
-                }
-                if 'Q' in save_params:
-                    label_params['Q'] = save_params['Q']
-                
-                label_image.tiffsave(label_temp, **label_params)
-            
-            # Use tiffcp to combine into multi-directory TIFF with increased memory limit
-            tiffcp_cmd = ['tiffcp', '-m', '0']  # Set unlimited memory
-            
-            # Add main image first
-            tiffcp_cmd.append(main_temp)
-            
-            # Add macro image if present
-            if macro_temp is not None:
-                tiffcp_cmd.append(macro_temp)
-                log.info("Adding macro image to multi-directory TIFF")
-            
-            # Add label image if present  
-            if label_temp is not None:
-                tiffcp_cmd.append(label_temp)
-                log.info("Adding label image to multi-directory TIFF")
-            
-            # Output file
-            tiffcp_cmd.append(self.output_path)
-            
-            log.info(f"Combining with tiffcp: {' '.join(tiffcp_cmd[1:])}")
-            result = subprocess.run(tiffcp_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                log.error(f"tiffcp failed: {result.stderr}")
-                log.info("Falling back to main image only")
-                # Copy main image as fallback
-                import shutil
-                shutil.copy2(main_temp, self.output_path)
-            else:
-                log.info("Multi-directory TIFF created successfully")
-                
-                # Fix Subfile Type for associated images using tiffset
-                try:
-                    # Count total directories to find associated images
-                    tiffinfo_result = subprocess.run(['tiffinfo', self.output_path], 
-                                                   capture_output=True, text=True)
-                    if tiffinfo_result.returncode == 0:
-                        directory_count = tiffinfo_result.stdout.count('TIFF directory')
-                        
-                        # Set SubfileType=1 (reduced-resolution) and ImageDescription for associated images
-                        if macro_image is not None:
-                            macro_dir = directory_count - (2 if label_image is not None else 1)
-                            # Set SubfileType=1 (reduced-resolution)
-                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '254', '1', self.output_path],
-                                         capture_output=True)
-                            
-                            # Calculate macro image metadata like the reference
-                            # Reference: Macro -offset=(0,0)-pixelsize=(0.0315,0.0315)-rois=((0,0,24000,20998),(56000,0,24390,20000))
-                            macro_pixel_size = self.pixel_size_x * (self.size_x / macro_image.width)
-                            macro_desc = f"Macro -offset=(0,0)-pixelsize=({macro_pixel_size:.4f},{macro_pixel_size:.4f})-rois=((0,0,{self.size_x},{self.size_y}),({self.size_x},0,{macro_image.width},{macro_image.height}))"
-                            
-                            # Set ImageDescription for QuPath recognition
-                            subprocess.run(['tiffset', '-d', str(macro_dir), '-s', '270', macro_desc, self.output_path],
-                                         capture_output=True)
-                            log.info(f"Set macro image (directory {macro_dir}) as associated image with metadata")
-                            log.info(f"Macro metadata: {macro_desc}")
-                        
-                        if label_image is not None:
-                            label_dir = directory_count - 1
-                            # Set SubfileType=1 (reduced-resolution)
-                            subprocess.run(['tiffset', '-d', str(label_dir), '-s', '254', '1', self.output_path],
-                                         capture_output=True)
-                            # Set ImageDescription for QuPath recognition
-                            subprocess.run(['tiffset', '-d', str(label_dir), '-s', '270', 'Label', self.output_path],
-                                         capture_output=True)
-                            log.info(f"Set label image (directory {label_dir}) as associated image")
-                
-                except Exception as e:
-                    log.warning(f"Failed to set Subfile Type tags: {e}")
-                
-        except Exception as e:
-            log.error(f"Failed to create multi-directory TIFF: {e}")
-            log.info("Falling back to main image only")
-            # Fallback to simple save
-            vips_image.tiffsave(self.output_path, **save_params)
-            
-        finally:
-            # Clean up temporary files
-            for temp_file in temp_files:
-                try:
-                    os.unlink(temp_file)
-                except:
-                    pass
 
 
 def main():
