@@ -800,9 +800,11 @@ class ISyntax2PyramidalTIFF:
                 pyramid_images = self.generate_pyramid_levels(vips_image)
                 log.info(f"Generated {len(pyramid_images)} pyramid levels")
                 
-                # Write pyramid levels (each as a separate page)
+                pixels_per_cm_x = 10000.0 / self.pixel_size_x if self.pixel_size_x > 0 else 1.0
+                pixels_per_cm_y = 10000.0 / self.pixel_size_y if self.pixel_size_y > 0 else 1.0
+                
+                # Write ALL pyramid levels first (directories 0-N) like reference file
                 for level, pyramid_level in enumerate(pyramid_images):
-                    # Convert pyvips image to numpy array
                     level_array = self.vips_to_numpy(pyramid_level)
                     
                     # Determine subfile type: 0 for base image, 1 for reduced resolution
@@ -815,10 +817,6 @@ class ISyntax2PyramidalTIFF:
                         mag = 40 / (2 ** level)  # Assuming 40x base magnification
                         description = f"level={level} mag={mag} quality={self.quality}"
                     
-                    # Resolution for pyramid levels
-                    pixels_per_cm_x = 10000.0 / self.pixel_size_x if self.pixel_size_x > 0 else 1.0
-                    pixels_per_cm_y = 10000.0 / self.pixel_size_y if self.pixel_size_y > 0 else 1.0
-                    
                     # Write pyramid level
                     tif.write(
                         level_array,
@@ -829,15 +827,16 @@ class ISyntax2PyramidalTIFF:
                         subfiletype=subfiletype,
                         description=description,
                         software='Philips DP v1.0',
-                        resolution=(pixels_per_cm_x, pixels_per_cm_y, 'CENTIMETER')
+                        resolution=(pixels_per_cm_x, pixels_per_cm_y),
+                        resolutionunit='CENTIMETER'
                     )
                     log.info(f"Wrote pyramid level {level} ({level_array.shape[1]}x{level_array.shape[0]})")
                 
-                # Write macro image if present
+                # Write macro image AFTER all pyramid levels (like reference file)
                 if macro_image is not None:
                     macro_array = self.vips_to_numpy(macro_image)
                     
-                    # Create Philips-style macro description
+                    # Create Philips-style macro description to match reference
                     macro_pixel_size = self.pixel_size_x * (self.size_x / macro_image.width) / 1000.0  # Convert to mm
                     macro_desc = f"Macro -offset=(0,0)-pixelsize=({macro_pixel_size:.4f},{macro_pixel_size:.4f})-rois=((0,0,{self.size_x},{self.size_y}),({self.size_x},0,{macro_image.width},{macro_image.height}))"
                     
@@ -847,13 +846,13 @@ class ISyntax2PyramidalTIFF:
                         compression='jpeg',
                         compressionargs={'level': self.quality},
                         subfiletype=1,  # Reduced resolution/thumbnail
-                        description=macro_desc,
-                        software='Philips DP v1.0',
-                        resolution=(1.0, 1.0, 'CENTIMETER')  # Distinguish from pyramid levels
+                        description=macro_desc,  # Philips-style description like reference
+                        software='Philips DP v1.0'
+                        # NO resolution tag - like reference file!
                     )
                     log.info(f"Wrote macro image ({macro_array.shape[1]}x{macro_array.shape[0]})")
                 
-                # Write label image if present
+                # Write label image LAST (like reference file)
                 if label_image is not None:
                     label_array = self.vips_to_numpy(label_image)
                     
@@ -863,9 +862,9 @@ class ISyntax2PyramidalTIFF:
                         compression='jpeg',
                         compressionargs={'level': self.quality},
                         subfiletype=1,  # Reduced resolution/thumbnail
-                        description='Label',
-                        software='Philips DP v1.0',
-                        resolution=(1.0, 1.0, 'CENTIMETER')  # Distinguish from pyramid levels
+                        description='Label',  # Simple description like reference
+                        software='Philips DP v1.0'
+                        # NO resolution tag - like reference file!
                     )
                     log.info(f"Wrote label image ({label_array.shape[1]}x{label_array.shape[0]})")
             
