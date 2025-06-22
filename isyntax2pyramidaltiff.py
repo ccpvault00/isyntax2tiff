@@ -810,12 +810,15 @@ class ISyntax2PyramidalTIFF:
                     # Determine subfile type: 0 for base image, 1 for reduced resolution
                     subfiletype = 0 if level == 0 else 1
                     
-                    # Create description for pyramid levels
+                    # Create Aperio-compatible description for pyramid levels
                     if level == 0:
-                        description = philips_xml  # Full XML metadata for base level
+                        # Base level needs Aperio format for OpenSlide detection
+                        aperio_desc = f"Aperio Image Library v12.0.15\n{self.size_x}x{self.size_y} [0,0,{self.size_x},{self.size_y}] ({self.tile_size}x{self.tile_size}) JPEG/RGB Q={self.quality}|AppMag = 40|StripeWidth = 2040|ScanScope ID = SS1302|Filename = {os.path.basename(self.input_path)}|Date = {datetime.now().strftime('%m/%d/%y')}|Time = {datetime.now().strftime('%H:%M:%S')}|User = Claude|Piecewise Affine = 0|MPP = {self.pixel_size_x / 1000.0:.6f}|Left = 0.000000|Top = 0.000000|LineCameraSkew = -0.000424|LineAreaXOffset = 0.019265|LineAreaYOffset = -0.000313|Focus Offset = 0.000000|ImageID = {os.path.splitext(os.path.basename(self.input_path))[0]}|OriginalWidth = {self.size_x}|Originalheight = {self.size_y}|Filtered = 5|OriginallyScanned = 1"
+                        description = aperio_desc
                     else:
-                        mag = 40 / (2 ** level)  # Assuming 40x base magnification
-                        description = f"level={level} mag={mag} quality={self.quality}"
+                        # Pyramid levels with basic descriptions
+                        mag = 40 / (2 ** level)
+                        description = f"Aperio Image Library v12.0.15\n{pyramid_level.width}x{pyramid_level.height} -> {pyramid_level.width}x{pyramid_level.height} - ({self.tile_size}x{self.tile_size}) JPEG/RGB Q={self.quality}"
                     
                     # Write pyramid level
                     tif.write(
@@ -832,41 +835,41 @@ class ISyntax2PyramidalTIFF:
                     )
                     log.info(f"Wrote pyramid level {level} ({level_array.shape[1]}x{level_array.shape[0]})")
                 
-                # Write macro image AFTER all pyramid levels (like reference file)
+                # Write macro image AFTER all pyramid levels (Aperio SVS format)
                 if macro_image is not None:
                     macro_array = self.vips_to_numpy(macro_image)
                     
-                    # Create Philips-style macro description to match reference
-                    macro_pixel_size = self.pixel_size_x * (self.size_x / macro_image.width) / 1000.0  # Convert to mm
-                    macro_desc = f"Macro -offset=(0,0)-pixelsize=({macro_pixel_size:.4f},{macro_pixel_size:.4f})-rois=((0,0,{self.size_x},{self.size_y}),({self.size_x},0,{macro_image.width},{macro_image.height}))"
-                    
+                    # Aperio SVS format requires simple "macro\r" description and stripped storage
                     tif.write(
                         macro_array,
                         photometric='rgb',
                         compression='jpeg',
                         compressionargs={'level': self.quality},
                         subfiletype=1,  # Reduced resolution/thumbnail
-                        description=macro_desc,  # Philips-style description like reference
-                        software='Philips DP v1.0'
-                        # NO resolution tag - like reference file!
+                        description="macro\r",  # Aperio format: simple name + carriage return
+                        software='Aperio Digital Pathology'
+                        # NO tile parameter = stripped format (required for Aperio associated images)
+                        # NO resolution tag
                     )
-                    log.info(f"Wrote macro image ({macro_array.shape[1]}x{macro_array.shape[0]})")
+                    log.info(f"Wrote macro image ({macro_array.shape[1]}x{macro_array.shape[0]}) in Aperio stripped format")
                 
-                # Write label image LAST (like reference file)
+                # Write label image LAST (Aperio SVS format)
                 if label_image is not None:
                     label_array = self.vips_to_numpy(label_image)
                     
+                    # Aperio SVS format requires simple "label\r" description and stripped storage
                     tif.write(
                         label_array,
                         photometric='rgb',
                         compression='jpeg',
                         compressionargs={'level': self.quality},
                         subfiletype=1,  # Reduced resolution/thumbnail
-                        description='Label',  # Simple description like reference
-                        software='Philips DP v1.0'
-                        # NO resolution tag - like reference file!
+                        description="label\r",  # Aperio format: simple name + carriage return
+                        software='Aperio Digital Pathology'
+                        # NO tile parameter = stripped format (required for Aperio associated images)
+                        # NO resolution tag
                     )
-                    log.info(f"Wrote label image ({label_array.shape[1]}x{label_array.shape[0]})")
+                    log.info(f"Wrote label image ({label_array.shape[1]}x{label_array.shape[0]}) in Aperio stripped format")
             
             log.info("Multi-directory TIFF created successfully with tifffile")
                 
