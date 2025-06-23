@@ -1,22 +1,23 @@
 # iSyntax2TIFF Converter
 
-A high-performance tool for converting Philips iSyntax whole slide images to pyramidal TIFF format, with support for both direct conversion and traditional pipeline processing.
+A tool for converting Philips iSyntax whole slide images to pyramidal TIFF format, with support for both direct conversion and pipeline processing.
 
 ## Overview
 
 This tool provides two conversion approaches:
 
-### 🚀 **Direct Conversion (Recommended)**
+###  **Direct Conversion**
 - **`isyntax2pyramidaltiff.py`** - Single-step conversion: iSyntax → Pyramidal TIFF
-- **8x faster** than traditional pipeline (~5 minutes vs 45+ minutes)
 - **Eliminates 40GB+ intermediate files** (no zarr/OME-TIFF storage)
-- **Proper metadata** with accurate pixel size resolution
+- **QuPath/OpenSlide compatible** - Aperio TIFF format with proper macro/label detection
+- **Proper metadata** with accurate pixel size resolution and XML embedding
 - **Dual pyramid support** (1024x1024 and 512x512 tile options)
 
-### 📁 **Traditional Pipeline**
-1. Convert iSyntax (.isyntax/.i2syntax) files to OME-TIFF format
-2. Generate pyramidal TIFF files from OME-TIFF  
-3. Process files locally or in batch using SLURM workload manager
+###  **Traditional Pipeline**
+1. Convert iSyntax (.isyntax/.i2syntax) files to Zarr format
+2. Convert Zarr to OME-TIFF format  
+3. Generate pyramidal TIFF files from OME-TIFF
+4. Process files locally or in batch using SLURM workload manager
 
 ## Setup Options
 
@@ -69,7 +70,7 @@ Please follow the installation instructions in the [`environment_installment`](.
 
 ## Usage
 
-### 🚀 Direct Conversion (Recommended)
+### Direct Conversion 
 
 Convert iSyntax files directly to pyramidal TIFF with a single command:
 
@@ -100,16 +101,16 @@ python isyntax2pyramidaltiff.py input.isyntax output.tiff \
 - ✅ **Memory efficient**: Processes large images without excessive RAM usage
 - ✅ **Configurable**: Adjustable compression, quality, tile sizes, and parallelization
 
-### 🚀 Batch Direct Conversion
+### Batch Direct Conversion
 
 Process multiple iSyntax files efficiently with parallel processing:
 
 ```bash
-# Basic batch conversion
-./batch_convert.sh /path/to/isyntax/directory /path/to/output/directory
+# Basic batch conversion (1-step direct)
+./batchrun_local_1step.sh /path/to/isyntax/directory /path/to/output/directory
 
 # High-performance batch conversion
-./batch_convert.sh /path/to/isyntax/files /path/to/output \
+./batchrun_local_1step.sh /path/to/isyntax/files /path/to/output \
     --file-workers 4 \
     --workers 8 \
     --pyramid-512
@@ -132,19 +133,31 @@ python batch_direct_convert.py /path/to/isyntax /path/to/output \
 - ✅ **Performance optimization**: Configurable parallelization levels
 - ✅ **Comprehensive logging**: Detailed conversion logs and statistics
 
-### 📁 Traditional Pipeline (Legacy)
+### Traditional Pipeline
 
-Process individual files using the traditional 3-step conversion:
+Process files using the traditional 3-step conversion:
 
 ```bash
 # Activate your environment
 mamba activate isyntax2tiff
 
-# Convert using traditional pipeline
-./local_convert.sh /path/to/your/file.isyntax
+# Single file conversion (3-step pipeline)
+./batchrun_local.sh /path/to/your/file.isyntax
+
+# Batch directory conversion (3-step pipeline with parallelization)
+./batchrun_local.sh /path/to/isyntax/directory /path/to/output 4
+
+# Full usage: input, output_dir, parallel_jobs
+./batchrun_local.sh /path/to/isyntax/files ./outputs 8
 ```
 
-This creates three output files in the `outputs/` directory:
+**Features:**
+- ✅ **Flexible input**: Single files or directories
+- ✅ **Configurable parallelization**: Default 4 jobs, customizable
+- ✅ **Progress tracking**: Timestamped logging
+- ✅ **Error handling**: Per-file error reporting
+
+This creates three output files per input:
 - `filename.zarr` - Raw tile data (25GB)
 - `filename.ome.tiff` - OME-TIFF format (15GB)  
 - `filename.tiff` - Pyramidal TIFF for viewers (2.8GB)
@@ -182,12 +195,12 @@ Note: Integration of steps 2 and 3 into a single workflow is planned for future 
 
 ### Core Conversion Tools
 - **`isyntax2pyramidaltiff.py`** - 🚀 **Direct converter** (single-step iSyntax → Pyramidal TIFF)
-- **`batch_direct_convert.py`** - 🚀 **Batch direct converter** (parallel processing of multiple files)
-- **`batch_convert.sh`** - 🚀 **Batch converter wrapper** (easy-to-use shell interface)
+- **`batch_direct_convert.py`** - 🚀 **Batch direct converter** (parallel processing of multiple files)  
+- **`batchrun_local_1step.sh`** - 🚀 **Batch converter wrapper** (easy-to-use shell interface for direct conversion)
 - `ome2pyramidaltiff.py` - Pyramidal TIFF conversion utility (optimized for traditional pipeline)
 
-### Traditional Pipeline
-- `local_convert.sh` - Traditional 3-step conversion script
+### Local Batch Processing
+- **`batchrun_local.sh`** - 3-step pipeline with parallelization (iSyntax → Zarr → OME-TIFF → Pyramidal TIFF)
 
 ### Dependencies
 - `isyntax2raw/` - Git submodule linking to official Glencoe Software repository
@@ -196,16 +209,11 @@ Note: Integration of steps 2 and 3 into a single workflow is planned for future 
 - `local_setup_files_for_ubuntu24.04/` - Local setup documentation and scripts
 - `environment_installment/` - HPC environment setup instructions and scripts
 
-### HPC Batch Processing (Legacy)
-- `batchrun.sh` - SLURM script for iSyntax to OME-TIFF conversion
+### HPC Batch Processing
+- `batchrun.sh` - SLURM script for iSyntax to OME-TIFF conversion (2-step pipeline)
 - `batchrun_ome2pyramidal.sh` - SLURM script for OME-TIFF to pyramidal TIFF conversion
-
-## Performance Comparison
-
-| Method | Time | Intermediate Files | Output Quality | Recommended |
-|--------|------|-------------------|----------------|-------------|
-| **Direct Conversion** | ~5 min | None | Excellent | ✅ **Yes** |
-| Traditional Pipeline | ~45+ min | 40GB+ (zarr + OME-TIFF) | Good | ❌ Legacy only |
+- `batchrun_deprecated.sh` - **DEPRECATED** older SLURM script (do not use)
+- `run.sh` - Single file SLURM processing example
 
 ## Command Line Options
 
@@ -264,10 +272,10 @@ optional arguments:
   --debug                      Enable debug logging
 ```
 
-### `batch_convert.sh` Options
+### `batchrun_local_1step.sh` Options
 
 ```
-Usage: batch_convert.sh INPUT_DIR OUTPUT_DIR [OPTIONS]
+Usage: batchrun_local_1step.sh INPUT_DIR OUTPUT_DIR [OPTIONS]
 
 Options:
   -j, --file-workers N   Number of files to process in parallel (default: 2)
@@ -281,10 +289,23 @@ Options:
   -h, --help             Show help message
 ```
 
+### `batchrun_local.sh` Options
+
+```
+Usage: batchrun_local.sh <input_dir_or_file> [output_dir] [parallel_jobs]
+
+Arguments:
+  input_dir_or_file  : Path to .isyntax file or directory containing .isyntax files
+  output_dir         : Output directory (default: ./outputs)
+  parallel_jobs      : Number of parallel jobs (default: 4)
+
+Examples:
+  batchrun_local.sh input.isyntax
+  batchrun_local.sh ./input_dir
+  batchrun_local.sh ./input_dir ./my_outputs
+  batchrun_local.sh ./input_dir ./my_outputs 8
+```
+
 ## Contributing
 
 Feel free to submit issues and enhancement requests.
-
-## License
-
-[Specify your license here]
