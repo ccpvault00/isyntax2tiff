@@ -224,7 +224,7 @@ class ISyntax2PyramidalTIFF:
     """Direct iSyntax to Pyramidal TIFF converter"""
     
     def __init__(self, input_path, output_path, tile_size=1024, max_workers=4, 
-                 batch_size=250, fill_color=255, compression="jpeg", quality=80, pyramid_512=False):
+                 batch_size=250, fill_color=255, compression="jpeg", quality=90, pyramid_512=False):
         """
         Initialize the converter
         
